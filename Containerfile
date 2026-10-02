@@ -14,6 +14,7 @@ COPY --from=frontend /src/web/dist ./web/dist
 RUN CGO_ENABLED=1 go build -trimpath -o /nac .
 
 FROM debian:stable-slim
+LABEL org.opencontainers.image.source=https://github.com/dubr0vin/nac
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates tzdata \
     && rm -rf /var/lib/apt/lists/* \
     && mkdir /data && chown 65532:65532 /data

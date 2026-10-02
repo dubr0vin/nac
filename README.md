@@ -24,6 +24,9 @@ Vite передаёт API-запросы серверу на 8080.
 
 ## Продакшен
 
+GitHub Actions собирает и публикует `ghcr.io/dubr0vin/nac:latest` при push в `main`.
+Сборку можно запустить вручную на вкладке Actions. Для локальной сборки:
+
 ```sh
 podman build -t nac -f Containerfile .
 ```
