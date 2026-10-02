@@ -3,6 +3,7 @@ WORKDIR /src/web
 COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
+COPY settings.example.yaml /src/settings.example.yaml
 RUN npm run build
 
 FROM golang:latest AS backend
