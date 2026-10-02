@@ -3,6 +3,7 @@ import i18n, { t, scheduleLabels } from "./i18n";
 import { useEffect, useRef, useState } from "react";
 import {
   Alert,
+  ActionIcon,
   DEFAULT_THEME,
   Badge,
   UnstyledButton,
@@ -21,6 +22,7 @@ import {
 } from "@mantine/core";
 import {
   Schedule,
+  MobileMonthView,
   AgendaView,
   type ScheduleViewLevel,
   type ScheduleEventData,
@@ -450,19 +452,85 @@ export default function App() {
           </Alert>
         )}
         {(!shared && state) || (shared && publicView) ? (
-          <Paper withBorder radius="lg" className="calendar">
-            <Calendar
-              events={events}
-              date={date}
-              view={view}
-              zone={zone}
-              onDate={setDate}
-              onView={shared ? undefined : setView}
-              onSelect={selectEvent}
-              onMove={shared ? undefined : move}
-              onCreate={shared ? undefined : createEvent}
-            />
-          </Paper>
+          <div className={shared ? undefined : "calendar-layout"}>
+            {!shared && (
+              <aside className="calendar-sidebar">
+                <Paper withBorder radius="lg" p="sm">
+                  <MobileMonthView
+                    date={date}
+                    selectedDate={date}
+                    onDayClick={setDate}
+                    locale={i18n.language}
+                    labels={scheduleLabels()}
+                    firstDayOfWeek={1}
+                    weekdayFormat="dd"
+                    withOutsideDays
+                    styles={{
+                      mobileMonthViewCalendar: {
+                        "--mobile-month-view-font-size": "var(--mantine-font-size-xs)",
+                        paddingInline: 0,
+                        borderBottom: 0,
+                      },
+                      mobileMonthViewDay: { height: 36 },
+                      mobileMonthViewEventsList: { display: "none" },
+                    }}
+                    renderHeader={() => (
+                      <Group justify="space-between" wrap="nowrap" w="100%">
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          aria-label={t("Предыдущий месяц")}
+                          onClick={() =>
+                            setDate(
+                              dayjs(date).subtract(1, "month").format("YYYY-MM-DD"),
+                            )
+                          }
+                        >
+                          ‹
+                        </ActionIcon>
+                        <Text size="sm" fw={600}>
+                          {dayjs(date).format("MMMM YYYY")}
+                        </Text>
+                        <ActionIcon
+                          variant="subtle"
+                          color="gray"
+                          aria-label={t("Следующий месяц")}
+                          onClick={() =>
+                            setDate(
+                              dayjs(date).add(1, "month").format("YYYY-MM-DD"),
+                            )
+                          }
+                        >
+                          ›
+                        </ActionIcon>
+                      </Group>
+                    )}
+                  />
+                  <Button
+                    fullWidth
+                    variant="subtle"
+                    mt="xs"
+                    onClick={() => setDate(dayjs().tz(zone).format("YYYY-MM-DD"))}
+                  >
+                    {t("Сегодня")}
+                  </Button>
+                </Paper>
+              </aside>
+            )}
+            <Paper withBorder radius="lg" className="calendar">
+              <Calendar
+                events={events}
+                date={date}
+                view={view}
+                zone={zone}
+                onDate={setDate}
+                onView={shared ? undefined : setView}
+                onSelect={selectEvent}
+                onMove={shared ? undefined : move}
+                onCreate={shared ? undefined : createEvent}
+              />
+            </Paper>
+          </div>
         ) : (
           !error && (
             <Center py={100}>

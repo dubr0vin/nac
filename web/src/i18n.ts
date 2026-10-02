@@ -1,9 +1,16 @@
 import i18n from "i18next";
 import { initReactI18next } from "react-i18next";
 import dayjs from "dayjs";
+import updateLocale from "dayjs/plugin/updateLocale";
 import "dayjs/locale/ru";
 import en from "./locales/en.json";
 import errors from "./locales/ru.json";
+
+dayjs.extend(updateLocale);
+dayjs.updateLocale("ru", {
+  weekdaysShort: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"],
+  weekdaysMin: ["Вс", "Пн", "Вт", "Ср", "Чт", "Пт", "Сб"],
+});
 
 // Russian text is the key, so it needs no duplicate translation file.
 const ru = Object.fromEntries(Object.keys(en).map((key) => [key, key]));
@@ -21,7 +28,7 @@ void i18n.use(initReactI18next).init({
     localStorage.getItem("nac.language") ||
     (navigator.language.startsWith("ru") ? "ru" : "en"),
   supportedLngs: ["ru", "en"],
-  fallbackLng: "ru",
+  fallbackLng: "en",
   keySeparator: false,
   nsSeparator: false,
   interpolation: { escapeValue: false },

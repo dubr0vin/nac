@@ -1,26 +1,14 @@
-# Tags are personal. The ics: prefix belongs to imported categories.
-tags: [работа, личное, созвон]
+# Personal tags. The ics: prefix is reserved for imported categories.
+tags: [Important]
 
 default_tags:
-  created: [личное]
-  invited: [созвон]
+  created: []
+  invited: []
 
-# Conditions: true, false, {tag: name}, {not: condition},
-# {and: [conditions]}, {or: [conditions]}.
-busy:
-  and:
-    - tag: работа
-    - not:
-        tag: личное
+# All events count as busy.
+busy: true
 
-# Colors: dark, gray (grey), red, pink, grape, violet, indigo, blue,
-# cyan, teal, green, lime, yellow, orange — Mantine shade 6. HEX also works.
-# First match wins. A pair of colors draws diagonal stripes.
-# Keep a final when: true rule as the default color.
+# The final rule sets the default color.
 colors:
-  - when: {tag: созвон}
-    color: [blue, orange]
-  - when: {tag: работа}
-    color: blue
   - when: true
     color: teal

@@ -61,14 +61,7 @@ function settingsPrompt() {
     ),
     t("Базовые настройки для создания с нуля:"),
     `\`\`\`yaml
-tags: []
-default_tags:
-  created: []
-  invited: []
-busy: true
-colors:
-  - when: true
-    color: teal
+${example.trim()}
 \`\`\``,
   ].join("\n\n");
 }

@@ -96,7 +96,7 @@ type Settings struct {
 
 func defaults() Settings {
 	return Settings{
-		Tags: []string{}, OwnTags: []string{}, IncomingTags: []string{},
+		Tags: []string{"Important"}, OwnTags: []string{}, IncomingTags: []string{},
 		Busy: Rule{Op: "true"}, Colors: []ColorRule{},
 		Color: "teal", Poll: 15, Timezone: "",
 	}

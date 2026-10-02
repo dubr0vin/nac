@@ -64,3 +64,26 @@ body {
     position: static;
   }
 }
+
+.calendar-layout {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  gap: var(--mantine-spacing-lg);
+  align-items: start;
+}
+.calendar-sidebar {
+  position: sticky;
+  top: var(--mantine-spacing-lg);
+}
+@media (max-width: 1000px) {
+  .calendar-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .calendar-sidebar {
+    display: none;
+  }
+}
+
+.calendar-sidebar .mantine-MobileMonthView-mobileMonthViewDay::before {
+  top: 2px;
+}
