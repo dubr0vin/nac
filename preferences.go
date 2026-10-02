@@ -2,8 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
-	"fmt"
 	"io"
 	"strings"
 
@@ -37,7 +35,7 @@ func (r *Rule) UnmarshalYAML(node *yaml.Node) error {
 func yamlRule(node *yaml.Node, depth int) (Rule, error) {
 	rule := Rule{}
 	if depth > 20 {
-		return rule, fmt.Errorf("line %d: rule too large", node.Line)
+		return rule, problem("rule_too_large").With("line", node.Line)
 	}
 	if node.Kind == yaml.ScalarNode && node.Tag == "!!bool" {
 		rule.Op = node.Value
@@ -47,19 +45,19 @@ func yamlRule(node *yaml.Node, depth int) (Rule, error) {
 		switch rule.Op {
 		case "tag":
 			if value.Kind != yaml.ScalarNode || value.Tag != "!!str" {
-				return rule, fmt.Errorf("line %d: tag must be a string", value.Line)
+				return rule, problem("tag_string_required").With("line", value.Line)
 			}
 			rule.Tag = value.Value
 		case "not", "and", "or":
 			children := []*yaml.Node{value}
 			if rule.Op != "not" {
 				if value.Kind != yaml.SequenceNode {
-					return rule, fmt.Errorf("line %d: %s needs a list", value.Line, rule.Op)
+					return rule, problem("rule_list_required").With("line", value.Line).With("operator", rule.Op)
 				}
 				children = value.Content
 			}
 			if len(children) > 100 {
-				return rule, fmt.Errorf("line %d: rule too large", node.Line)
+				return rule, problem("rule_too_large").With("line", node.Line)
 			}
 			for _, child := range children {
 				item, err := yamlRule(child, depth+1)
@@ -69,13 +67,13 @@ func yamlRule(node *yaml.Node, depth int) (Rule, error) {
 				rule.Children = append(rule.Children, item)
 			}
 		default:
-			return rule, fmt.Errorf("line %d: unknown rule %q", key.Line, key.Value)
+			return rule, problem("unknown_rule").With("line", key.Line).With("operator", key.Value)
 		}
 	} else {
-		return rule, fmt.Errorf("line %d: expected true, false, tag, not, and or or", node.Line)
+		return rule, problem("invalid_rule").With("line", node.Line)
 	}
 	if err := rule.Validate(depth); err != nil {
-		return rule, fmt.Errorf("line %d: %w", node.Line, err)
+		return rule, asProblem(err).With("line", node.Line)
 	}
 	return rule, nil
 }
@@ -102,11 +100,7 @@ func settingsYAML(settings Settings) (string, error) {
 	var config preferences
 	config.Tags, config.Busy = settings.Tags, settings.Busy
 	config.DefaultTags.Created, config.DefaultTags.Invited = settings.OwnTags, settings.IncomingTags
-	colors := append([]ColorRule{}, settings.Colors...)
-	if len(colors) == 0 || colors[len(colors)-1].Rule.Op != "true" {
-		colors = append(colors, ColorRule{Rule: Rule{Op: "true"}, Color: settings.Color})
-	}
-	for _, color := range colors {
+	for _, color := range settings.Colors {
 		var node yaml.Node
 		var value any = color.Color
 		if color.Stripe != "" {
@@ -127,7 +121,7 @@ func settingsYAML(settings Settings) (string, error) {
 
 func parseSettingsYAML(text string, settings Settings) (Settings, error) {
 	if len(text) > 65536 {
-		return settings, errors.New("config exceeds 64 KiB")
+		return settings, problem("config_too_large")
 	}
 	decoder := yaml.NewDecoder(strings.NewReader(text))
 	decoder.KnownFields(true)
@@ -137,10 +131,10 @@ func parseSettingsYAML(text string, settings Settings) (Settings, error) {
 	}
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
-		return settings, errors.New("expected one YAML document")
+		return settings, problem("single_yaml_document")
 	}
 	if err := config.Busy.Validate(0); err != nil {
-		return settings, fmt.Errorf("busy: %w", err)
+		return settings, asProblem(err).With("field", "busy")
 	}
 	settings.Tags, settings.Busy = config.Tags, config.Busy
 	settings.OwnTags, settings.IncomingTags = config.DefaultTags.Created, config.DefaultTags.Invited
@@ -153,11 +147,11 @@ func parseSettingsYAML(text string, settings Settings) (Settings, error) {
 			return settings, err
 		}
 		if len(colors) < 1 || len(colors) > 2 {
-			return settings, fmt.Errorf("line %d: color needs one or two colors", item.Color.Line)
+			return settings, problem("color_count").With("line", item.Color.Line)
 		}
 		for _, color := range colors {
 			if !validColor(color) {
-				return settings, fmt.Errorf("line %d: use a Mantine color name or #RRGGBB", item.Color.Line)
+				return settings, problem("invalid_color").With("line", item.Color.Line)
 			}
 		}
 		color := ColorRule{Rule: item.When, Color: colors[0]}
@@ -165,14 +159,13 @@ func parseSettingsYAML(text string, settings Settings) (Settings, error) {
 			color.Stripe = colors[1]
 		}
 		if err := color.Rule.Validate(0); err != nil {
-			return settings, fmt.Errorf("line %d: when: %w", item.Color.Line, err)
+			return settings, asProblem(err).With("line", item.Color.Line).With("field", "when")
 		}
 		settings.Colors = append(settings.Colors, color)
 	}
 	if len(settings.Colors) == 0 || settings.Colors[len(settings.Colors)-1].Rule.Op != "true" {
-		return settings, errors.New("colors: last rule must be when: true")
+		return settings, problem("fallback_color_required")
 	}
-	settings.Color = settings.Colors[len(settings.Colors)-1].Color
 	settings.Config = text
 	return settings, settings.Validate()
 }

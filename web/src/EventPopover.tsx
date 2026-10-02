@@ -39,6 +39,7 @@ export function EventPopover({
   onClose,
   onEdit,
   onSaved,
+  onOpenTask,
 }: {
   event: Occurrence;
   anchor: HTMLElement;
@@ -47,6 +48,7 @@ export function EventPopover({
   onClose: () => void;
   onEdit: (series: boolean) => void;
   onSaved: () => void;
+  onOpenTask?: () => void;
 }) {
   const [detail, setDetail] = useState<EventDetail>();
   const [selected, setSelected] = useState<string[]>([]);
@@ -147,6 +149,11 @@ export function EventPopover({
                 .tz(zone)
                 .format(event.allDay ? "D MMMM" : "D MMMM, HH:mm")}
             </Text>
+            {onOpenTask && (
+              <Button variant="light" onClick={onOpenTask}>
+                {t("Открыть задачу")}
+              </Button>
+            )}
             {error && <Alert color="red">{error}</Alert>}
             {!detail && !error && <Loader size="sm" />}
             {detail && (

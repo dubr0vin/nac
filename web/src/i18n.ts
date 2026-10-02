@@ -4,7 +4,8 @@ import dayjs from "dayjs";
 import updateLocale from "dayjs/plugin/updateLocale";
 import "dayjs/locale/ru";
 import en from "./locales/en.json";
-import errors from "./locales/ru.json";
+import legacyErrors from "./locales/ru.json";
+import errors from "./locales/errors.json";
 
 dayjs.extend(updateLocale);
 dayjs.updateLocale("ru", {
@@ -16,12 +17,15 @@ dayjs.updateLocale("ru", {
 const ru = Object.fromEntries(Object.keys(en).map((key) => [key, key]));
 void i18n.use(initReactI18next).init({
   resources: {
-    ru: { translation: { ...ru, ...errors } },
+    ru: { translation: { ...ru, ...legacyErrors }, errors: errors.ru },
     en: {
       translation: {
-        ...Object.fromEntries(Object.keys(errors).map((key) => [key, key])),
+        ...Object.fromEntries(
+          Object.keys(legacyErrors).map((key) => [key, key]),
+        ),
         ...en,
       },
+      errors: errors.en,
     },
   },
   lng:

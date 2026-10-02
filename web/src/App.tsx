@@ -1,11 +1,12 @@
 import { useTranslation } from "react-i18next";
 import i18n, { t, scheduleLabels } from "./i18n";
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   ActionIcon,
-  DEFAULT_THEME,
+  useMantineTheme,
   Badge,
+  Box,
   UnstyledButton,
   Button,
   Menu,
@@ -35,46 +36,44 @@ import {
   dayjs,
   displayTime,
   effectiveTimezone,
+  eventTimes,
   message,
   toInstant,
   type EventDetail,
   type Occurrence,
   type PublicView,
   type State,
+  type Task,
 } from "./api";
 import { EventEditor } from "./EventEditor";
 import { EventPopover } from "./EventPopover";
+import { Tasks, useTaskVisibility } from "./Tasks";
+import { usePolling } from "./usePolling";
 import { SettingsPanel } from "./SettingsPanel";
 
-function resolveColor(color: string) {
-  return DEFAULT_THEME.colors[color === "grey" ? "gray" : color]?.[6] ?? color;
+function mantineColor(color: string) {
+  return color === "grey" ? "gray" : color;
 }
 
-function stripeBackground(event: Occurrence) {
-  return event.stripe
-    ? `repeating-linear-gradient(135deg, ${event.color} 0 8px, ${event.stripe} 8px 16px)`
-    : undefined;
+function scheduleEvent(event: Occurrence, zone: string): ScheduleEventData {
+  return {
+    id: event.id,
+    title: event.title ?? "",
+    start: displayTime(
+      event.start,
+      event.allDay ? (event.timezone ?? zone) : zone,
+    ),
+    end: displayTime(event.end, event.allDay ? (event.timezone ?? zone) : zone),
+    color: mantineColor(event.color),
+    variant: "light",
+    payload: { event },
+  };
 }
-
-const renderEvent: NonNullable<ScheduleEventProps["renderEvent"]> = (
-  event,
-  props,
-) => {
-  const occurrence = event.payload?.event as Occurrence;
-  return (
-    <UnstyledButton
-      {...props}
-      style={{
-        ...props.style,
-        "--nac-event-stripes": stripeBackground(occurrence),
-        textShadow: occurrence.stripe ? "0 1px 2px #000" : undefined,
-      }}
-    />
-  );
-};
 
 function Calendar({
   events,
+  tasks = [],
+  onSelectTask,
   date,
   view,
   zone,
@@ -83,7 +82,11 @@ function Calendar({
   onSelect,
   onMove,
   onCreate,
+  onTaskDrop,
 }: {
+  onTaskDrop?: (data: DataTransfer, start: string) => void;
+  tasks?: Task[];
+  onSelectTask?: (task: Task) => void;
   events: Occurrence[];
   date: string;
   view: string;
@@ -94,23 +97,48 @@ function Calendar({
   onMove?: (event: Occurrence, start: string, end: string) => void;
   onCreate?: (start: string, end: string, allDay?: boolean) => void;
 }) {
-  events = events.map((event) => ({
-    ...event,
-    color: resolveColor(event.color),
-    stripe: event.stripe ? resolveColor(event.stripe) : undefined,
-  }));
-  const data: ScheduleEventData[] = events.map((event) => ({
-    id: event.id,
-    title: event.title ?? "",
-    start: displayTime(
-      event.start,
-      event.allDay ? (event.timezone ?? zone) : zone,
-    ),
-    end: displayTime(event.end, event.allDay ? (event.timezone ?? zone) : zone),
-    color: event.color,
-    variant: "filled",
-    payload: { event },
-  }));
+  const theme = useMantineTheme();
+  const renderEvent: NonNullable<ScheduleEventProps["renderEvent"]> = (
+    event,
+    props,
+  ) => {
+    const item = event.payload?.event ?? event.payload?.task;
+    const accent = item.stripe
+      ? theme.variantColorResolver({
+          theme,
+          color: mantineColor(item.stripe),
+          variant: "filled",
+        }).background
+      : undefined;
+    return (
+      <UnstyledButton
+        {...props}
+        data-accent={accent ? true : undefined}
+        style={{
+          ...props.style,
+          "--nac-event-accent": accent,
+          textDecoration: item.completed ? "line-through" : undefined,
+        }}
+      />
+    );
+  };
+  const data = events.map((event) => scheduleEvent(event, zone));
+  for (const task of tasks) {
+    if (!task.due) continue;
+    data.push({
+      id: `task:${task.id}`,
+      title: `${task.completed ? "✓" : "☐"} ${task.title}`,
+      start: `${task.due} 00:00:00`,
+      end: dayjs(task.due).add(1, "day").format("YYYY-MM-DD 00:00:00"),
+      color: mantineColor(task.color ?? "teal"),
+      variant: "light",
+      payload: { task },
+    });
+  }
+  function select(item: ScheduleEventData, anchor: HTMLElement) {
+    if (item.payload?.task) onSelectTask?.(item.payload.task as Task);
+    else onSelect(item.payload?.event as Occurrence, anchor);
+  }
   function move(data: {
     event: ScheduleEventData;
     newStart: string;
@@ -130,9 +158,7 @@ function Calendar({
         locale={i18n.language}
         labels={labels}
         renderEvent={renderEvent}
-        onEventClick={(event, click) =>
-          onSelect(event.payload?.event as Occurrence, click.currentTarget)
-        }
+        onEventClick={(event, click) => select(event, click.currentTarget)}
       />
     );
   }
@@ -185,13 +211,12 @@ function Calendar({
       onDayClick={(date) => onCreate?.(`${date} 09:00`, `${date} 10:00`)}
       withDragSlotSelect={!!onCreate}
       onSlotDragEnd={(start, end) => onCreate?.(start, end)}
-      onEventClick={(event, click) =>
-        onSelect(event.payload?.event as Occurrence, click.currentTarget)
-      }
+      onEventClick={(event, click) => select(event, click.currentTarget)}
       withEventsDragAndDrop={!!onMove}
       withEventResize={!!onMove}
-      canDragEvent={(event) => !!event.payload?.event.editable}
-      canResizeEvent={(event) => !!event.payload?.event.editable}
+      canDragEvent={(event) => !!event.payload?.event?.editable}
+      canResizeEvent={(event) => !!event.payload?.event?.editable}
+      onExternalEventDrop={onTaskDrop}
       onEventDrop={move}
       onEventResize={move}
     />
@@ -226,6 +251,7 @@ export default function App() {
   const [error, setError] = useState("");
   const [updated, setUpdated] = useState("");
   const [editor, setEditor] = useState<Occurrence | undefined>(editorFromURL);
+  const [selectedTask, setSelectedTask] = useState<Task>();
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [preview, setPreview] = useState<Occurrence>();
   const [selectedEvent, setSelectedEvent] = useState<{
@@ -238,7 +264,7 @@ export default function App() {
     publicView?.timezone ?? state?.me.settings.timezone,
   );
   const refresh = () => setRevision((value) => value + 1);
-  const pollSeconds = useRef(15);
+  const taskVisibility = useTaskVisibility();
 
   useEffect(() => {
     const restore = () => setEditor(editorFromURL());
@@ -270,21 +296,20 @@ export default function App() {
     }
   }
 
-  useEffect(() => {
-    let active = true;
-    let running = false;
-    let timer: ReturnType<typeof setTimeout>;
-    async function load() {
-      if (running) return;
-      running = true;
-      clearTimeout(timer);
+  const load = useCallback(
+    async (signal: AbortSignal) => {
       try {
         if (shared) {
           const today = dayjs().tz(zone).format("YYYY-MM-DD");
           const query = dateRange(today, zone, view);
           query.set("id", exportID);
-          const data = await api<PublicView>(`/view/data?${query}`);
-          if (!active) return;
+          const data = await api<PublicView>(
+            `/view/data?${query}`,
+            "GET",
+            undefined,
+            signal,
+          );
+          if (signal.aborted) return;
           setPublicView(data);
           setEvents(data.events);
           setPreview((current) =>
@@ -295,24 +320,27 @@ export default function App() {
           setDate(today);
           setView(data.view);
           setColorScheme(data.theme);
-          pollSeconds.current = data.poll;
         } else {
-          const data = await api<State>("/api/state");
+          const data = await api<State>("/api/state", "GET", undefined, signal);
           const query = dateRange(
             date,
             effectiveTimezone(data.me.settings.timezone),
             view,
           );
-          const events = await api<Occurrence[]>(`/api/events?${query}`);
-          if (!active) return;
+          const events = await api<Occurrence[]>(
+            `/api/events?${query}`,
+            "GET",
+            undefined,
+            signal,
+          );
+          if (signal.aborted) return;
           setState(data);
           setEvents(events);
-          pollSeconds.current = data.me.settings.poll;
         }
         setError("");
         setUpdated(dayjs().format("HH:mm:ss"));
       } catch (error) {
-        if (!active) return;
+        if (signal.aborted) return;
         setError(message(error));
         if (
           error instanceof APIError &&
@@ -324,24 +352,15 @@ export default function App() {
           if (shared) setPublicView(undefined);
           else setState(undefined);
         }
-      } finally {
-        running = false;
-        if (active) timer = setTimeout(load, pollSeconds.current * 1000);
       }
-    }
-    const focus = () => {
-      if (!document.hidden) void load();
-    };
-    void load();
-    window.addEventListener("focus", focus);
-    document.addEventListener("visibilitychange", focus);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-      window.removeEventListener("focus", focus);
-      document.removeEventListener("visibilitychange", focus);
-    };
-  }, [shared, exportID, date, revision, zone, view]);
+    },
+    [shared, exportID, date, revision, zone, view],
+  );
+  usePolling(
+    load,
+    publicView?.poll ?? state?.me.settings.poll ?? 15,
+    !editor || !state,
+  );
 
   async function move(event: Occurrence, start: string, end: string) {
     try {
@@ -360,11 +379,12 @@ export default function App() {
           version: master.version,
           members: master.members,
           rrule: master.rrule,
-          start: toInstant(
+          ...eventTimes(
             start,
+            end,
+            event.allDay,
             event.allDay ? (event.timezone ?? zone) : zone,
           ),
-          end: toInstant(end, event.allDay ? (event.timezone ?? zone) : zone),
         },
       );
       refresh();
@@ -372,6 +392,29 @@ export default function App() {
       setError(message(error));
     }
   }
+  async function scheduleTask(data: DataTransfer, start: string) {
+    const task = state?.tasks.find(
+      (task) => task.id === data.getData("application/x-nac-task"),
+    );
+    if (!task || !state) return;
+    try {
+      const instant = toInstant(start, zone);
+      await api("/api/events", "POST", {
+        taskId: task.id,
+        title: task.title,
+        description: task.description,
+        start: instant,
+        end: dayjs(instant).add(1, "hour").toISOString(),
+        timezone: zone,
+        editPolicy: "author",
+        members: [],
+      });
+      refresh();
+    } catch (error) {
+      setError(message(error));
+    }
+  }
+
   function createEvent(
     start = `${date} 09:00`,
     end = `${date} 10:00`,
@@ -382,7 +425,7 @@ export default function App() {
       start: toInstant(start, zone),
       end: toInstant(end, zone),
       allDay,
-      color: state?.me.settings.color ?? "teal",
+      color: "teal",
     });
   }
   function selectEvent(event: Occurrence, anchor: HTMLElement) {
@@ -455,10 +498,12 @@ export default function App() {
           <div className={shared ? undefined : "calendar-layout"}>
             {!shared && (
               <aside className="calendar-sidebar">
-                <Paper withBorder radius="lg" p="sm">
+                <Paper withBorder radius="lg" className="sidebar-month">
                   <MobileMonthView
+                    h="auto"
                     date={date}
                     selectedDate={date}
+                    events={events.map((event) => scheduleEvent(event, zone))}
                     onDayClick={setDate}
                     locale={i18n.language}
                     labels={scheduleLabels()}
@@ -466,12 +511,6 @@ export default function App() {
                     weekdayFormat="dd"
                     withOutsideDays
                     styles={{
-                      mobileMonthViewCalendar: {
-                        "--mobile-month-view-font-size": "var(--mantine-font-size-xs)",
-                        paddingInline: 0,
-                        borderBottom: 0,
-                      },
-                      mobileMonthViewDay: { height: 36 },
                       mobileMonthViewEventsList: { display: "none" },
                     }}
                     renderHeader={() => (
@@ -482,13 +521,15 @@ export default function App() {
                           aria-label={t("Предыдущий месяц")}
                           onClick={() =>
                             setDate(
-                              dayjs(date).subtract(1, "month").format("YYYY-MM-DD"),
+                              dayjs(date)
+                                .subtract(1, "month")
+                                .format("YYYY-MM-DD"),
                             )
                           }
                         >
                           ‹
                         </ActionIcon>
-                        <Text size="sm" fw={600}>
+                        <Text fw={600}>
                           {dayjs(date).format("MMMM YYYY")}
                         </Text>
                         <ActionIcon
@@ -506,20 +547,36 @@ export default function App() {
                       </Group>
                     )}
                   />
-                  <Button
-                    fullWidth
-                    variant="subtle"
-                    mt="xs"
-                    onClick={() => setDate(dayjs().tz(zone).format("YYYY-MM-DD"))}
-                  >
-                    {t("Сегодня")}
-                  </Button>
+                  <Box p="sm">
+                    <Button
+                      fullWidth
+                      variant="subtle"
+                      onClick={() =>
+                        setDate(dayjs().tz(zone).format("YYYY-MM-DD"))
+                      }
+                    >
+                      {t("Сегодня")}
+                    </Button>
+                  </Box>
                 </Paper>
+                {state && (
+                  <Tasks
+                    tasks={state.tasks}
+                    tags={state.tags}
+                    zone={zone}
+                    selected={selectedTask}
+                    onSelect={setSelectedTask}
+                    onSaved={refresh}
+                    visibility={taskVisibility}
+                  />
+                )}
               </aside>
             )}
-            <Paper withBorder radius="lg" className="calendar">
+            <div className="calendar">
               <Calendar
                 events={events}
+                tasks={shared ? undefined : state?.tasks}
+                onSelectTask={setSelectedTask}
                 date={date}
                 view={view}
                 zone={zone}
@@ -528,8 +585,9 @@ export default function App() {
                 onSelect={selectEvent}
                 onMove={shared ? undefined : move}
                 onCreate={shared ? undefined : createEvent}
+                onTaskDrop={shared ? undefined : scheduleTask}
               />
-            </Paper>
+            </div>
           </div>
         ) : (
           !error && (
@@ -551,6 +609,18 @@ export default function App() {
           zone={zone}
           onClose={() => setSelectedEvent(undefined)}
           onSaved={refresh}
+          onOpenTask={
+            state.tasks.some((task) => task.id === selectedEvent.event.taskId)
+              ? () => {
+                  setSelectedTask(
+                    state.tasks.find(
+                      (task) => task.id === selectedEvent.event.taskId,
+                    ),
+                  );
+                  setSelectedEvent(undefined);
+                }
+              : undefined
+          }
           onEdit={(series) =>
             openEditor({
               ...selectedEvent.event,

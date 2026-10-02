@@ -2,8 +2,7 @@ package main
 
 import (
 	"context"
-	"errors"
-	"fmt"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/url"
@@ -26,7 +25,7 @@ type Source struct {
 	Interval    int       `json:"interval"`
 	LastAttempt time.Time `json:"lastAttempt"`
 	LastSuccess time.Time `json:"lastSuccess"`
-	Error       string    `json:"error"`
+	Error       *Problem  `json:"error,omitempty" gorm:"serializer:json"`
 	TokenHash   string    `json:"-"`
 	HasToken    bool      `json:"hasToken" gorm:"-"`
 }
@@ -62,13 +61,13 @@ func (a *App) putSource(c echo.Context) error {
 		return err
 	}
 	if strings.TrimSpace(source.Name) == "" {
-		return echo.NewHTTPError(400, "name required")
+		return echo.NewHTTPError(400, problem("name_required"))
 	}
 	if _, err := time.LoadLocation(source.Timezone); err != nil {
 		return badRequest(err)
 	}
 	if source.Interval != 0 && (source.Interval < 60 || source.Interval > 31536000) {
-		return echo.NewHTTPError(400, "interval is seconds; minimum 60, or 0 to disable")
+		return echo.NewHTTPError(400, problem("invalid_pull_interval"))
 	}
 	if err := validateTags(source.Tags, false); err != nil {
 		return badRequest(err)
@@ -76,7 +75,7 @@ func (a *App) putSource(c echo.Context) error {
 	if source.URL != "" {
 		parsed, err := url.Parse(source.URL)
 		if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil {
-			return echo.NewHTTPError(400, "use an HTTP(S) URL without userinfo")
+			return echo.NewHTTPError(400, problem("invalid_source_url"))
 		}
 	}
 	source.ID = c.Param("id")
@@ -95,7 +94,7 @@ func (a *App) putSource(c echo.Context) error {
 		source.TokenHash = old.TokenHash
 		source.LastAttempt, source.LastSuccess, source.Error = old.LastAttempt, old.LastSuccess, old.Error
 	} else {
-		source.LastAttempt, source.LastSuccess, source.Error = time.Time{}, time.Time{}, ""
+		source.LastAttempt, source.LastSuccess, source.Error = time.Time{}, time.Time{}, nil
 	}
 	if err := a.db.Save(&source).Error; err != nil {
 		return err
@@ -160,7 +159,7 @@ func parseICS(reader io.Reader, s Source) (map[string]Event, error) {
 		return nil, err
 	}
 	if _, err = dec.Decode(); err != io.EOF {
-		return nil, errors.New("expected a single VCALENDAR")
+		return nil, problem("single_calendar")
 	}
 	loc, err := time.LoadLocation(s.Timezone)
 	if err != nil {
@@ -173,16 +172,16 @@ func parseICS(reader io.Reader, s Source) (map[string]Event, error) {
 			continue
 		}
 		if c.Name != "VEVENT" {
-			return nil, fmt.Errorf("unsupported component %s", c.Name)
+			return nil, problem("unsupported_component").With("component", c.Name)
 		}
 		uid, err := c.Props.Text("UID")
 		if err != nil || uid == "" {
-			return nil, errors.New("VEVENT requires UID")
+			return nil, problem("uid_required")
 		}
 		if len(c.Props.Values("RRULE")) > 1 || c.Props.Get("EXRULE") != nil {
-			return nil, errors.New("multiple RRULE or EXRULE is unsupported")
+			return nil, problem("unsupported_recurrence")
 		}
-		e := Event{UID: uid, Source: s.ID, Timezone: s.Timezone, Members: []Member{{User: s.User, Editor: true}}}
+		e := Event{UID: uid, Source: s.ID, Timezone: s.Timezone, Creator: s.User, EditPolicy: "author", Members: []Member{{User: s.User}}}
 		readText := func(name string) (string, error) {
 			if c.Props.Get(name) == nil {
 				return "", nil
@@ -206,7 +205,7 @@ func parseICS(reader io.Reader, s Source) (map[string]Event, error) {
 		}
 		p := c.Props.Get("DTSTART")
 		if p == nil {
-			return nil, errors.New("VEVENT requires DTSTART")
+			return nil, problem("start_required")
 		}
 		e.Start, err = p.DateTime(loc)
 		if err != nil {
@@ -250,11 +249,11 @@ func parseICS(reader io.Reader, s Source) (map[string]Event, error) {
 			}
 		}
 		if err = e.Validate(); err != nil {
-			return nil, fmt.Errorf("UID %s: %w", uid, err)
+			return nil, asProblem(err).With("uid", uid)
 		}
 		if p := c.Props.Get("RECURRENCE-ID"); p != nil {
 			if p.Params.Get("RANGE") != "" {
-				return nil, errors.New("RECURRENCE-ID RANGE is unsupported")
+				return nil, problem("unsupported_recurrence_range")
 			}
 			t, err := p.DateTime(loc)
 			if err != nil {
@@ -265,23 +264,23 @@ func parseICS(reader io.Reader, s Source) (map[string]Event, error) {
 				overrides[uid] = map[string]*Event{}
 			}
 			if overrides[uid][rid] != nil {
-				return nil, errors.New("duplicate recurrence override")
+				return nil, problem("duplicate_override")
 			}
 			overrides[uid][rid] = &e
 		} else {
 			if _, exists := out[uid]; exists {
-				return nil, errors.New("duplicate UID")
+				return nil, problem("duplicate_uid")
 			}
 			out[uid] = e
 		}
 		if len(out) > 10000 {
-			return nil, errors.New("snapshot exceeds 10000 series")
+			return nil, problem("snapshot_limit")
 		}
 	}
 	for uid, os := range overrides {
 		e, ok := out[uid]
 		if !ok {
-			return nil, errors.New("recurrence override without master")
+			return nil, problem("override_without_master")
 		}
 		e.Overrides = os
 		out[uid] = e
@@ -330,13 +329,14 @@ func (a *App) importSnapshot(source Source, reader io.Reader) error {
 		}
 		now := time.Now().UTC()
 		return tx.Model(&source).Updates(map[string]any{
-			"last_attempt": now, "last_success": now, "error": "",
+			"last_attempt": now, "last_success": now, "error": nil,
 		}).Error
 	})
 }
 
 func (a *App) recordFailure(source Source, err error) {
-	a.db.Model(&source).Updates(map[string]any{"last_attempt": time.Now().UTC(), "error": err.Error()})
+	data, _ := json.Marshal(asProblem(err))
+	a.db.Model(&source).Updates(map[string]any{"last_attempt": time.Now().UTC(), "error": string(data)})
 }
 
 func (a *App) pull(ctx context.Context, source Source) error {
@@ -356,27 +356,27 @@ func (a *App) pull(ctx context.Context, source Source) error {
 
 func (a *App) fetchSnapshot(ctx context.Context, source Source) error {
 	if source.URL == "" {
-		return errors.New("source has no pull URL")
+		return problem("source_url_required")
 	}
 	request, err := http.NewRequestWithContext(ctx, "GET", source.URL, nil)
 	if err != nil {
-		return errors.New("invalid pull URL")
+		return problem("invalid_source_url")
 	}
 	request.Header.Set("Accept", "text/calendar")
 	response, err := a.client.Do(request)
 	if err != nil {
-		return errors.New("cannot fetch source (connection or timeout)")
+		return problem("source_unreachable")
 	}
 	defer response.Body.Close()
 	if response.StatusCode != 200 {
-		return fmt.Errorf("source returned HTTP %d", response.StatusCode)
+		return problem("source_http_error").With("status", response.StatusCode)
 	}
 	data, err := io.ReadAll(io.LimitReader(response.Body, (16<<20)+1))
 	if err != nil {
 		return err
 	}
 	if len(data) > 16<<20 {
-		return errors.New("ICS exceeds 16 MiB")
+		return problem("ics_too_large")
 	}
 	return a.importSnapshot(source, strings.NewReader(string(data)))
 }

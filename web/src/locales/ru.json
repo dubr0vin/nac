@@ -49,5 +49,8 @@
   "Internal Server Error": "Ошибка сервера.",
   "Failed to fetch": "Нет соединения с сервером.",
   "Load failed": "Нет соединения с сервером.",
-  "use a Mantine color name or #RRGGBB": "Укажите имя цвета Mantine или HEX в формате #RRGGBB."
+  "use a Mantine color name or #RRGGBB": "Укажите имя цвета Mantine или HEX в формате #RRGGBB.",
+  "task changed; reopen before saving": "Задача изменилась. Откройте её заново перед сохранением.",
+  "task needs a title (up to 1000 characters) and description up to 64 KiB": "Укажите название до 1000 символов и описание до 64 КиБ.",
+  "deadline must be YYYY-MM-DD": "Срок должен быть датой в формате ГГГГ-ММ-ДД."
 }

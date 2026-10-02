@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"slices"
 	"strings"
 	"time"
@@ -49,24 +48,24 @@ func (r Rule) Match(tags []string) bool {
 
 func (r Rule) Validate(depth int) error {
 	if depth > 20 || len(r.Children) > 100 {
-		return errors.New("rule too large")
+		return problem("rule_too_large")
 	}
 	switch r.Op {
 	case "true", "false":
 		if len(r.Children) > 0 || r.Tag != "" {
-			return errors.New("constant rule must be a leaf")
+			return problem("invalid_constant_rule")
 		}
 	case "tag":
 		if r.Tag == "" || len(r.Children) > 0 {
-			return errors.New("tag rule needs a tag")
+			return problem("tag_required")
 		}
 	case "not":
 		if len(r.Children) != 1 {
-			return errors.New("not needs one condition")
+			return problem("invalid_not_rule")
 		}
 	case "and", "or":
 	default:
-		return errors.New("unknown rule operator")
+		return problem("unknown_operator")
 	}
 	for _, c := range r.Children {
 		if err := c.Validate(depth + 1); err != nil {
@@ -89,7 +88,6 @@ type Settings struct {
 	IncomingTags []string    `json:"incomingTags"`
 	Busy         Rule        `json:"busy"`
 	Colors       []ColorRule `json:"colors"`
-	Color        string      `json:"color"`
 	Poll         int         `json:"poll"`
 	Timezone     string      `json:"timezone"`
 }
@@ -97,14 +95,14 @@ type Settings struct {
 func defaults() Settings {
 	return Settings{
 		Tags: []string{"Important"}, OwnTags: []string{}, IncomingTags: []string{},
-		Busy: Rule{Op: "true"}, Colors: []ColorRule{},
-		Color: "teal", Poll: 15, Timezone: "",
+		Busy: Rule{Op: "true"}, Colors: []ColorRule{{Rule: Rule{Op: "true"}, Color: "teal"}},
+		Poll: 15, Timezone: "",
 	}
 }
 
 func (s Settings) Validate() error {
 	if s.Poll < 5 || s.Poll > 3600 {
-		return errors.New("poll must be 5–3600 seconds")
+		return problem("invalid_poll")
 	}
 	if _, err := time.LoadLocation(s.Timezone); err != nil {
 		return err
@@ -117,11 +115,11 @@ func (s Settings) Validate() error {
 			return err
 		}
 		if !validColor(c.Color) || (c.Stripe != "" && !validColor(c.Stripe)) {
-			return errors.New("use a Mantine color name or #RRGGBB")
+			return problem("invalid_color")
 		}
 	}
-	if !validColor(s.Color) {
-		return errors.New("use a Mantine color name or #RRGGBB")
+	if len(s.Colors) == 0 || s.Colors[len(s.Colors)-1].Rule.Op != "true" {
+		return problem("fallback_color_required")
 	}
 	return validateTags(append(append(slices.Clone(s.Tags), s.OwnTags...), s.IncomingTags...), false)
 }
@@ -147,7 +145,7 @@ func (s Settings) EventColor(tags []string) ColorRule {
 			return c
 		}
 	}
-	return ColorRule{Color: s.Color}
+	return ColorRule{} // Valid settings always end with an unconditional rule.
 }
 
 type User struct {
@@ -159,11 +157,11 @@ type User struct {
 }
 
 type Member struct {
-	User   string `json:"user"`
-	Editor bool   `json:"editor"`
+	User string `json:"user"`
 }
 
 type Event struct {
+	TaskID      string            `json:"taskId,omitempty"`
 	EditPolicy  string            `json:"editPolicy,omitempty"`
 	Creator     string            `json:"creator"`
 	Removed     bool              `json:"-"`
@@ -199,6 +197,7 @@ type Participant struct {
 }
 
 type Occurrence struct {
+	TaskID       string        `json:"taskId,omitempty"`
 	Participants []Participant `json:"participants,omitempty"`
 	ID           string        `json:"id"`
 	EventID      string        `json:"eventId,omitempty"`
@@ -226,12 +225,12 @@ func (e Event) IsMember(user string) bool {
 }
 
 func (e Event) CanEdit(user string) bool {
-	return e.Source == "" && slices.ContainsFunc(e.Members, func(m Member) bool { return m.User == user && m.Editor })
+	return e.Source == "" && e.IsMember(user) && (e.EditPolicy == "all" || e.Creator == user)
 }
 
 func (e Event) Validate() error {
 	if e.Start.IsZero() || !e.End.After(e.Start) || e.End.Sub(e.Start) > 366*24*time.Hour {
-		return errors.New("invalid event time range")
+		return problem("invalid_event_range")
 	}
 	loc, err := time.LoadLocation(e.Timezone)
 	if err != nil {
@@ -241,7 +240,7 @@ func (e Event) Validate() error {
 		for _, t := range []time.Time{e.Start, e.End} {
 			v := t.In(loc)
 			if v.Hour() != 0 || v.Minute() != 0 || v.Second() != 0 {
-				return errors.New("all-day boundaries must be midnight in event timezone")
+				return problem("invalid_all_day_range")
 			}
 		}
 	}
@@ -251,7 +250,7 @@ func (e Event) Validate() error {
 			return err
 		}
 		if o.Freq > rrule.DAILY {
-			return errors.New("recurrence frequency must be daily or slower")
+			return problem("invalid_frequency")
 		}
 		o.Dtstart = e.Start.In(loc)
 		if _, err = rrule.NewRRule(*o); err != nil {
@@ -259,18 +258,17 @@ func (e Event) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
-	editors := 0
 	for _, m := range e.Members {
 		if seen[m.User] || m.User == "" {
-			return errors.New("duplicate or empty participant")
+			return problem("invalid_participant")
 		}
 		seen[m.User] = true
-		if m.Editor {
-			editors++
-		}
 	}
-	if editors == 0 {
-		return errors.New("at least one editor is required")
+	if e.EditPolicy != "all" && e.EditPolicy != "author" {
+		return problem("invalid_edit_policy")
+	}
+	if !e.IsMember(e.Creator) {
+		return problem("creator_required")
 	}
 	return nil
 }
@@ -279,11 +277,11 @@ func newID() string { return uuid.NewString() }
 
 func validateTags(tags []string, imported bool) error {
 	if len(tags) > 200 {
-		return errors.New("too many tags")
+		return problem("too_many_tags")
 	}
 	for _, t := range tags {
 		if strings.TrimSpace(t) == "" || len(t) > 200 || (!imported && strings.HasPrefix(t, "ics:")) {
-			return errors.New("invalid tag; ics: is reserved for imports")
+			return problem("invalid_tag")
 		}
 	}
 	return nil
@@ -319,12 +317,11 @@ func openDB(path string) (*gorm.DB, error) {
 		return nil, err
 	}
 	conn.SetMaxOpenConns(1)
-	if err = db.AutoMigrate(&User{}, &Event{}, &Personal{}, &Source{}, &Export{}); err != nil {
+	if err = db.AutoMigrate(&User{}, &Event{}, &Personal{}, &Source{}, &Export{}, &Task{}); err != nil {
 		conn.Close()
 		return nil, err
 	}
-	// Earlier versions placed the creator first in the participant list.
-	if err = db.Exec("UPDATE events SET creator = json_extract(members, '$[0].user') WHERE (creator IS NULL OR creator = '') AND (source IS NULL OR source = '')").Error; err != nil {
+	if err = migrateLegacy(db); err != nil {
 		conn.Close()
 		return nil, err
 	}
@@ -345,8 +342,7 @@ func (a *App) event(id string) (Event, error) {
 
 func (a *App) events(user string) ([]Event, error) {
 	events := []Event{}
-	err := a.db.Where("removed = ?", false).Find(&events).Error
-	events = slices.DeleteFunc(events, func(event Event) bool { return !event.IsMember(user) })
+	err := a.db.Where("removed = ? AND EXISTS (SELECT 1 FROM json_each(events.members) WHERE json_extract(value, '$.user') = ?)", false, user).Find(&events).Error
 	return events, err
 }
 
@@ -356,6 +352,20 @@ func (a *App) tagState(event, user string) (map[string]Tags, error) {
 	result := map[string]Tags{}
 	for _, row := range rows {
 		result[row.RID] = row.Tags
+	}
+	return result, err
+}
+
+// Fetch personal tags once per user, rather than once per event.
+func (a *App) tagStates(user string) (map[string]map[string]Tags, error) {
+	var rows []Personal
+	err := a.db.Where("user_id = ?", user).Find(&rows).Error
+	result := map[string]map[string]Tags{}
+	for _, row := range rows {
+		if result[row.EventID] == nil {
+			result[row.EventID] = map[string]Tags{}
+		}
+		result[row.EventID][row.RID] = row.Tags
 	}
 	return result, err
 }
@@ -437,7 +447,7 @@ func expand(e Event, from, to time.Time) (map[string]Event, error) {
 		next := r.Iterator()
 		for n := 0; ; n++ {
 			if n >= 200000 {
-				return nil, errors.New("recurrence expansion limit exceeded")
+				return nil, problem("recurrence_limit")
 			}
 			t, ok := next()
 			if !ok || !t.Before(to) {

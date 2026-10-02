@@ -42,7 +42,7 @@ func digest(value string) string {
 }
 
 func currentUser(c echo.Context) User { return c.Get("user").(User) }
-func badRequest(err error) error      { return echo.NewHTTPError(400, err.Error()) }
+func badRequest(err error) error      { return echo.NewHTTPError(400, asProblem(err)) }
 
 func (a *App) authenticate(c echo.Context) error {
 	r := c.Request()
@@ -57,17 +57,20 @@ func (a *App) authenticate(c echo.Context) error {
 		trusted = true
 	}
 	if !trusted || subject == "" {
-		return echo.NewHTTPError(401, "sign in through the trusted proxy")
+		return echo.NewHTTPError(401, problem("proxy_required"))
 	}
 	if len(subject) > 1024 || len(login) > 200 || len(name) > 200 {
-		return echo.NewHTTPError(400, "identity too long")
+		return echo.NewHTTPError(400, problem("identity_too_long"))
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var user User
 	err := a.db.Where(User{Subject: subject}).
-		Attrs(User{ID: newID(), Settings: defaults()}).
-		Assign(map[string]any{"login": login, "name": name}).FirstOrCreate(&user).Error
+		Attrs(User{ID: newID(), Settings: defaults()}).FirstOrCreate(&user).Error
+	if err == nil && (user.Login != login || user.Name != name) {
+		user.Login, user.Name = login, name
+		err = a.db.Model(&user).Select("Login", "Name").Updates(user).Error
+	}
 	if err == nil {
 		c.Set("user", user)
 	}
@@ -80,7 +83,7 @@ func (a *App) auth(next echo.HandlerFunc) echo.HandlerFunc {
 			return err
 		}
 		if c.Request().Method != "GET" && c.Request().Header.Get("X-NAC") != "1" {
-			return echo.NewHTTPError(403, "missing X-NAC header")
+			return echo.NewHTTPError(403, problem("csrf_header_required"))
 		}
 		return next(c)
 	}
@@ -89,6 +92,7 @@ func (a *App) auth(next echo.HandlerFunc) echo.HandlerFunc {
 func (a *App) handler() *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
+	e.HTTPErrorHandler = handleError
 	e.Use(middleware.Recover(), middleware.BodyLimit("16M"))
 	e.Use(func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
@@ -104,7 +108,9 @@ func (a *App) handler() *echo.Echo {
 	})
 	api := e.Group("/api", a.auth)
 	api.GET("/state", a.state)
-	api.PUT("/settings", a.putSettings)
+	api.POST("/tasks", a.putTask)
+	api.PUT("/tasks/:id", a.putTask)
+	api.DELETE("/tasks/:id", a.deleteTask)
 	api.PUT("/settings/config", a.putPreferences)
 	api.GET("/events", a.listEvents)
 	api.POST("/availability", a.availability)
@@ -154,12 +160,21 @@ func (a *App) state(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	tasks := []Task{}
+	if err := a.db.Where("user_id = ?", user.ID).Order("rowid").Find(&tasks).Error; err != nil {
+		return err
+	}
+	for i := range tasks {
+		color := user.Settings.EventColor(tasks[i].Tags)
+		tasks[i].Color, tasks[i].Stripe = color.Color, color.Stripe
+	}
+	states, err := a.tagStates(user.ID)
+	if err != nil {
+		return err
+	}
 	tags := slices.Clone(user.Settings.Tags)
 	for _, event := range events {
-		state, err := a.tagState(event.ID, user.ID)
-		if err != nil {
-			return err
-		}
+		state := states[event.ID]
 		tags = append(tags, event.Categories...)
 		for _, override := range event.Overrides {
 			tags = append(tags, override.Categories...)
@@ -172,32 +187,17 @@ func (a *App) state(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(200, echo.Map{"me": user, "users": users, "sources": sources, "exports": exports, "tags": unique(tags)})
-}
-
-func (a *App) putSettings(c echo.Context) error {
-	user := currentUser(c)
-	if err := c.Bind(&user.Settings); err != nil {
-		return err
-	}
-	user.Settings.Config = ""
-	if err := user.Settings.Validate(); err != nil {
-		return badRequest(err)
-	}
-	if err := a.db.Model(&user).Select("Settings").Updates(user).Error; err != nil {
-		return err
-	}
-	return c.JSON(200, user.Settings)
+	return c.JSON(200, echo.Map{"me": user, "users": users, "sources": sources, "exports": exports, "tags": unique(tags), "tasks": tasks})
 }
 
 func window(c echo.Context) (time.Time, time.Time, error) {
 	from, err := time.Parse(time.RFC3339, c.QueryParam("from"))
 	if err != nil {
-		return from, time.Time{}, echo.NewHTTPError(400, "from must be RFC3339")
+		return from, time.Time{}, echo.NewHTTPError(400, problem("invalid_range_start"))
 	}
 	to, err := time.Parse(time.RFC3339, c.QueryParam("to"))
 	if err != nil || !to.After(from) || to.Sub(from) > 370*24*time.Hour {
-		return from, to, echo.NewHTTPError(400, "range must be at most 370 days")
+		return from, to, echo.NewHTTPError(400, problem("invalid_range"))
 	}
 	return from, to, nil
 }

@@ -19,7 +19,7 @@ func (a *App) getEvent(c echo.Context) error {
 	if err != nil {
 		return err
 	}
-	return c.JSON(200, echo.Map{"event": event, "tags": tags})
+	return c.JSON(200, echo.Map{"event": event, "tags": tags, "editable": event.CanEdit(user.ID)})
 }
 
 func (a *App) listEvents(c echo.Context) error {
@@ -49,7 +49,7 @@ func (a *App) availability(c echo.Context) error {
 		return err
 	}
 	if len(users) > 1000 {
-		return echo.NewHTTPError(400, "too many participants")
+		return echo.NewHTTPError(400, problem("too_many_participants"))
 	}
 	result := map[string][]Occurrence{}
 	for _, id := range unique(users) {
@@ -71,22 +71,23 @@ func (a *App) visibleEvents(viewer User, target string, from, to time.Time) ([]O
 	if err != nil {
 		return nil, err
 	}
-	result := []Occurrence{}
-	for _, event := range events {
-		state, err := a.tagState(event.ID, target)
+	states, err := a.tagStates(target)
+	if err != nil {
+		return nil, err
+	}
+	ownStates := states
+	if target != viewer.ID {
+		ownStates, err = a.tagStates(viewer.ID)
 		if err != nil {
 			return nil, err
 		}
-		ownState := state
-		if target != viewer.ID && event.IsMember(viewer.ID) {
-			ownState, err = a.tagState(event.ID, viewer.ID)
-			if err != nil {
-				return nil, err
-			}
-		}
+	}
+	result := []Occurrence{}
+	for _, event := range events {
+		state, ownState := states[event.ID], ownStates[event.ID]
 		instances, err := expand(event, from, to)
 		if err != nil {
-			return nil, echo.NewHTTPError(422, err.Error())
+			return nil, echo.NewHTTPError(422, err)
 		}
 		for rid, instance := range instances {
 			tags := tagsFor(event, rid, state)
@@ -104,7 +105,7 @@ func (a *App) visibleEvents(viewer User, target string, from, to time.Time) ([]O
 			ownTags := tagsFor(event, rid, ownState)
 			color := viewer.Settings.EventColor(ownTags)
 			result = append(result, Occurrence{
-				ID: event.ID + "/" + rid, EventID: event.ID, RID: rid, Version: event.Version,
+				TaskID: event.TaskID, ID: event.ID + "/" + rid, EventID: event.ID, RID: rid, Version: event.Version,
 				Title: instance.Title, Start: instance.Start, End: instance.End,
 				AllDay: instance.AllDay, Timezone: instance.Timezone,
 				Description: instance.Description, Location: instance.Location, URL: instance.URL,
@@ -137,15 +138,23 @@ func (a *App) putEvent(c echo.Context) error {
 			return echo.ErrForbidden
 		}
 		if event.Version != old.Version {
-			return echo.NewHTTPError(409, "event changed; reload before saving")
+			return echo.NewHTTPError(409, problem("event_conflict"))
 		}
 	} else {
 		if rid != "" {
-			return echo.NewHTTPError(400, "occurrence needs a series")
+			return echo.NewHTTPError(400, problem("series_required"))
 		}
 		id = newID()
 		others := slices.DeleteFunc(event.Members, func(member Member) bool { return member.User == user.ID })
-		event.Members = append([]Member{{User: user.ID, Editor: true}}, others...)
+		event.Members = append([]Member{{User: user.ID}}, others...)
+	}
+	var task Task
+	if old.ID != "" {
+		event.TaskID = old.TaskID
+	} else if event.TaskID != "" {
+		if err := a.db.First(&task, "id = ? AND user_id = ?", event.TaskID, user.ID).Error; err != nil {
+			return echo.ErrNotFound
+		}
 	}
 	event.Creator = old.Creator
 	if old.ID == "" {
@@ -153,17 +162,12 @@ func (a *App) putEvent(c echo.Context) error {
 	}
 	if event.EditPolicy == "" {
 		event.EditPolicy = old.EditPolicy
+		if old.ID == "" {
+			event.EditPolicy = "all"
+		}
 	}
-	if event.EditPolicy != "" {
-		if event.EditPolicy != "all" && event.EditPolicy != "author" {
-			return echo.NewHTTPError(400, "unknown edit policy")
-		}
-		if !event.IsMember(event.Creator) {
-			event.Members = append(event.Members, Member{User: event.Creator})
-		}
-		for i := range event.Members {
-			event.Members[i].Editor = event.EditPolicy == "all" || event.Members[i].User == event.Creator
-		}
+	if !event.IsMember(event.Creator) {
+		event.Members = append(event.Members, Member{User: event.Creator})
 	}
 	event.ID, event.Source, event.UID = id, "", old.UID
 	if event.UID == "" {
@@ -172,7 +176,7 @@ func (a *App) putEvent(c echo.Context) error {
 	event.Version = old.Version + 1
 	event.Categories = nil
 	if len(event.Overrides) != 0 {
-		return echo.NewHTTPError(400, "edit occurrences separately")
+		return echo.NewHTTPError(400, problem("edit_occurrences_separately"))
 	}
 	event.Overrides = old.Overrides
 	if err := event.Validate(); err != nil {
@@ -180,7 +184,7 @@ func (a *App) putEvent(c echo.Context) error {
 	}
 	for _, member := range event.Members {
 		if _, err := a.user(member.User); err != nil {
-			return echo.NewHTTPError(400, "unknown participant")
+			return echo.NewHTTPError(400, problem("unknown_participant"))
 		}
 	}
 	previousMembers := slices.Clone(old.Members)
@@ -195,10 +199,10 @@ func (a *App) putEvent(c echo.Context) error {
 		}
 		_, exists := instances[rid]
 		if !exists && old.Overrides[rid] == nil {
-			return echo.NewHTTPError(400, "unknown occurrence")
+			return echo.NewHTTPError(400, problem("unknown_occurrence"))
 		}
 		if event.RRule != old.RRule {
-			return echo.NewHTTPError(400, "edit recurrence on the series")
+			return echo.NewHTTPError(400, problem("edit_series_recurrence"))
 		}
 		if old.Overrides == nil {
 			old.Overrides = map[string]*Event{}
@@ -224,6 +228,9 @@ func (a *App) putEvent(c echo.Context) error {
 			tags := participant.Settings.IncomingTags
 			if old.ID == "" && member.User == user.ID {
 				tags = participant.Settings.OwnTags
+				if task.ID != "" {
+					tags = unique(append(slices.Clone(tags), task.Tags...))
+				}
 			}
 			personal := Personal{EventID: id, UserID: member.User, RID: ""}
 			if err := tx.Where("event_id = ? AND user_id = ? AND rid = ?", id, member.User, "").Attrs(Personal{Tags: Tags{Add: tags}}).FirstOrCreate(&personal).Error; err != nil {
@@ -250,7 +257,7 @@ func (a *App) deleteEvent(c echo.Context) error {
 		return echo.ErrForbidden
 	}
 	if c.QueryParam("version") != fmt.Sprint(event.Version) {
-		return echo.NewHTTPError(409, "event changed; reload before deleting")
+		return echo.NewHTTPError(409, problem("event_conflict"))
 	}
 	if rid := c.QueryParam("rid"); rid != "" {
 		date, err := time.Parse(time.RFC3339, rid)
@@ -295,7 +302,7 @@ func (a *App) putTags(c echo.Context) error {
 			return badRequest(err)
 		}
 		if _, exists := instances[rid]; !exists && event.Overrides[rid] == nil {
-			return echo.NewHTTPError(400, "unknown occurrence")
+			return echo.NewHTTPError(400, problem("unknown_occurrence"))
 		}
 	}
 	if err := a.saveTags(event.ID, user.ID, rid, tags); err != nil {

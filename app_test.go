@@ -94,7 +94,7 @@ func TestIdentityPermissionsAndPersonalTags(t *testing.T) {
 	}
 
 	input := sampleEvent()
-	input.Members = []Member{{User: bob.ID, Editor: true}}
+	input.Members = []Member{{User: bob.ID}}
 	event := decode[Event](t, request(t, app, "alice", "POST", "/api/events", input, 200))
 	request(t, app, "alice", "PUT", "/api/events/"+event.ID+"/tags", Tags{Add: []string{"work"}}, 200)
 	request(t, app, "bob", "PUT", "/api/events/"+event.ID+"/tags", Tags{Add: []string{"friends"}}, 200)
@@ -111,14 +111,15 @@ func TestIdentityPermissionsAndPersonalTags(t *testing.T) {
 		t.Fatal("personal tags mixed between users", own)
 	}
 
-	// An editor can change membership and revoke the original creator's rights.
-	event.Members = []Member{{User: bob.ID, Editor: true}, {User: eve.ID, Editor: false}}
+	// Editors may change policy; the creator remains a participant and editor.
+	event.Members = []Member{{User: bob.ID}, {User: eve.ID}}
+	event.EditPolicy = "author"
 	updated := decode[Event](t, request(t, app, "bob", "PUT", "/api/events/"+event.ID, event, 200))
-	request(t, app, "alice", "GET", "/api/events/"+event.ID, nil, 404)
+	request(t, app, "alice", "GET", "/api/events/"+event.ID, nil, 200)
 	request(t, app, "eve", "PUT", "/api/events/"+event.ID, updated, 403)
-	request(t, app, "bob", "PUT", "/api/events/"+event.ID, event, 409)
-	updated.Members[0].Editor = false
-	request(t, app, "bob", "PUT", "/api/events/"+event.ID, updated, 400)
+	request(t, app, "alice", "PUT", "/api/events/"+event.ID, event, 409)
+	updated.EditPolicy = "unknown"
+	request(t, app, "alice", "PUT", "/api/events/"+event.ID, updated, 400)
 }
 
 func TestRulesAndSettings(t *testing.T) {
@@ -158,9 +159,11 @@ func TestRulesAndSettings(t *testing.T) {
 	}
 	app := testApp(t)
 	user := login(t, app, "alice")
+	settings.Colors = append(settings.Colors, ColorRule{Rule: Rule{Op: "true"}, Color: "teal"})
 	settings.Poll = 37
 	settings.Busy = Rule{Op: "false"}
-	request(t, app, "alice", "PUT", "/api/settings", settings, 200)
+	config, _ := settingsYAML(settings)
+	request(t, app, "alice", "PUT", "/api/settings/config", map[string]any{"yaml": config, "timezone": settings.Timezone, "poll": settings.Poll}, 200)
 	loaded, err := app.user(user.ID)
 	if err != nil || loaded.Settings.Poll != 37 {
 		t.Fatal("settings did not persist", err)
@@ -310,7 +313,8 @@ func TestRecurrenceDSTOverridesAndExport(t *testing.T) {
 	allDay.Start = time.Date(2026, 10, 24, 0, 0, 0, 0, zone)
 	allDay.End = allDay.Start.AddDate(0, 0, 1)
 	allDay.RRule = "FREQ=DAILY;COUNT=3"
-	allDay.Members = []Member{{User: user.ID, Editor: true}}
+	allDay.Creator, allDay.EditPolicy = user.ID, "all"
+	allDay.Members = []Member{{User: user.ID}}
 	instances, err = expand(allDay, allDay.Start, allDay.Start.AddDate(0, 0, 4))
 	if err != nil {
 		t.Fatal(err)
@@ -333,7 +337,7 @@ func TestOccurrenceEditsAndSourceIsolation(t *testing.T) {
 	override.Title = "Moved occurrence"
 	override.Start = input.Start.AddDate(0, 0, 1).Add(3 * time.Hour)
 	override.End = override.Start.Add(time.Hour)
-	override.Members = append(override.Members, Member{User: bob.ID, Editor: true})
+	override.Members = append(override.Members, Member{User: bob.ID})
 	event = decode[Event](t, request(t, app, "alice", "PUT", "/api/events/"+event.ID+"?rid="+rid, override, 200))
 	instances, err := expand(event, input.Start.Add(-time.Hour), input.Start.AddDate(0, 0, 4))
 	if err != nil || len(instances) != 3 || instances[rid].Title != override.Title || instances[rid].Start.Hour() != 12 {
@@ -518,7 +522,7 @@ colors:
 		t.Fatal(err)
 	}
 	roundtrip, err := parseSettingsYAML(yamlText, legacy)
-	if err != nil || !roundtrip.Busy.Match(nil) || roundtrip.EventColor(nil).Color != legacy.Color {
+	if err != nil || !roundtrip.Busy.Match(nil) || roundtrip.EventColor(nil).Color != legacy.EventColor(nil).Color {
 		t.Fatal("legacy settings did not round-trip", err, yamlText)
 	}
 }
@@ -615,7 +619,7 @@ func TestEventAuthorPolicyAndBatchAvailability(t *testing.T) {
 	input := sampleEvent()
 	input.Creator = eve.ID
 	input.EditPolicy = "author"
-	input.Members = []Member{{User: bob.ID, Editor: true}}
+	input.Members = []Member{{User: bob.ID}}
 	event := decode[Event](t, request(t, app, "alice", "POST", "/api/events", input, 200))
 	if event.Creator != alice.ID || !event.CanEdit(alice.ID) || event.CanEdit(bob.ID) {
 		t.Fatal("creator or author-only permissions are incorrect")
@@ -646,4 +650,54 @@ func TestEventAuthorPolicyAndBatchAvailability(t *testing.T) {
 	}
 	request(t, app, "", "POST", "/api/availability"+rangeQuery, []string{alice.ID}, 401)
 	request(t, app, "alice", "GET", "/event?id="+event.ID, nil, 200)
+}
+
+func TestTasksAndWorkBlocks(t *testing.T) {
+	app := testApp(t)
+	alice := login(t, app, "alice")
+	login(t, app, "bob")
+	task := decode[Task](t, request(t, app, "alice", "POST", "/api/tasks", Task{
+		Title: "Write article", Due: "2026-10-09", Tags: []string{"Important"},
+	}, 200))
+	if task.Version != 1 || task.ID == "" {
+		t.Fatal("task was not created", task)
+	}
+	request(t, app, "bob", "PUT", "/api/tasks/"+task.ID, task, 404)
+	request(t, app, "bob", "DELETE", "/api/tasks/"+task.ID+"?version=1", nil, 404)
+	bobState := decode[struct {
+		Tasks []Task `json:"tasks"`
+	}](t, request(t, app, "bob", "GET", "/api/state", nil, 200))
+	if len(bobState.Tasks) != 0 {
+		t.Fatal("another user's task leaked")
+	}
+	request(t, app, "alice", "POST", "/api/tasks", Task{Title: "Bad date", Due: "2026-02-30"}, 400)
+	request(t, app, "alice", "POST", "/api/tasks", Task{Title: "  "}, 400)
+
+	input := Event{
+		TaskID: task.ID, Title: task.Title, Timezone: "UTC",
+		Start: time.Date(2026, 10, 5, 10, 0, 0, 0, time.UTC),
+		End:   time.Date(2026, 10, 5, 11, 0, 0, 0, time.UTC),
+	}
+	request(t, app, "bob", "POST", "/api/events", input, 404)
+	block := decode[Event](t, request(t, app, "alice", "POST", "/api/events", input, 200))
+	second := decode[Event](t, request(t, app, "alice", "POST", "/api/events", input, 200))
+	if block.TaskID != task.ID || second.TaskID != task.ID || block.ID == second.ID {
+		t.Fatal("work blocks lost the task link")
+	}
+	tags, err := app.tagState(block.ID, alice.ID)
+	if err != nil || !slices.Contains(tags[""].Add, "Important") {
+		t.Fatal("task tags were not copied to the work block", err)
+	}
+	task.Completed = true
+	updated := decode[Task](t, request(t, app, "alice", "PUT", "/api/tasks/"+task.ID, task, 200))
+	request(t, app, "alice", "PUT", "/api/tasks/"+task.ID, task, 409)
+	if !updated.Completed || updated.Due != "2026-10-09" {
+		t.Fatal("completion changed the deadline", updated)
+	}
+	request(t, app, "alice", "DELETE", "/api/tasks/"+task.ID+"?version=1", nil, 409)
+	request(t, app, "alice", "DELETE", "/api/tasks/"+task.ID+"?version=2", nil, 200)
+	preserved, err := app.event(block.ID)
+	if err != nil || preserved.TaskID != "" || preserved.Title != task.Title {
+		t.Fatal("deleting a task must preserve scheduled work", err)
+	}
 }

@@ -4,7 +4,7 @@ COPY web/package*.json ./
 RUN npm ci
 COPY web/ ./
 COPY settings.example.yaml /src/settings.example.yaml
-RUN npm run build
+RUN npm test && npm run build
 
 FROM golang:latest AS backend
 WORKDIR /src
@@ -12,7 +12,7 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY *.go ./
 COPY --from=frontend /src/web/dist ./web/dist
-RUN CGO_ENABLED=1 go build -trimpath -o /nac .
+RUN CGO_ENABLED=1 go test ./... && CGO_ENABLED=1 go build -trimpath -o /nac .
 
 FROM debian:stable-slim
 LABEL org.opencontainers.image.source=https://github.com/dubr0vin/nac

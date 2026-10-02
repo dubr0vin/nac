@@ -1,13 +1,14 @@
 import { t } from "./i18n";
-import dayjs from "dayjs";
-import utc from "dayjs/plugin/utc";
-import timezone from "dayjs/plugin/timezone";
-import "dayjs/locale/ru";
-
-dayjs.extend(utc);
-dayjs.extend(timezone);
-
-export { dayjs };
+export {
+  dayjs,
+  dateRange,
+  displayTime,
+  toInstant,
+  eventTimes,
+  moveToSlot,
+  allDayRange,
+  effectiveTimezone,
+} from "./dates";
 
 export type Rule = {
   op: "tag" | "not" | "and" | "or" | "true" | "false";
@@ -22,15 +23,15 @@ export type Settings = {
   incomingTags: string[];
   busy: Rule;
   colors: ColorRule[];
-  color: string;
   poll: number;
   timezone: string;
 };
 export type User = { id: string; login: string; name: string };
-export type Member = { user: string; editor: boolean };
+export type Member = { user: string };
 export type Event = {
+  taskId?: string;
   creator: string;
-  editPolicy?: "all" | "author";
+  editPolicy: "all" | "author";
   id: string;
   uid?: string;
   source?: string;
@@ -52,8 +53,13 @@ export type Event = {
   overrides?: Record<string, Event>;
 };
 export type Tags = { add: string[] | null; remove: string[] | null };
-export type EventDetail = { event: Event; tags: Record<string, Tags> };
+export type EventDetail = {
+  event: Event;
+  tags: Record<string, Tags>;
+  editable: boolean;
+};
 export type Occurrence = {
+  taskId?: string;
   id: string;
   eventId?: string;
   rid?: string;
@@ -84,7 +90,7 @@ export type Source = {
   interval: number;
   lastAttempt?: string;
   lastSuccess?: string;
-  error?: string;
+  error?: Problem;
   hasToken?: boolean;
 };
 export type Export = {
@@ -97,7 +103,19 @@ export type Export = {
   timezone: string;
   poll: number;
 };
+export type Task = {
+  color?: string;
+  stripe?: string;
+  id: string;
+  version: number;
+  title: string;
+  description: string;
+  due: string;
+  completed: boolean;
+  tags: string[];
+};
 export type State = {
+  tasks: Task[];
   me: User & { settings: Settings };
   users: User[];
   tags: string[];
@@ -110,73 +128,67 @@ export type PublicView = Pick<
 > & {
   events: Occurrence[];
 };
+export type Problem = { code: string; params?: Record<string, unknown> };
+
+export function problemMessage(problem: Problem) {
+  const params = problem.params ?? {};
+  let message = t(problem.code, {
+    ns: "errors",
+    defaultValue: t("http_error", { ns: "errors", ...params }),
+    ...params,
+  });
+  for (const key of ["field", "uid", "line"]) {
+    if (params[key] !== undefined)
+      message = t(`context_${key}`, { ns: "errors", ...params, message });
+  }
+  return message;
+}
+
 export class APIError extends Error {
   constructor(
     public status: number,
-    message: string,
+    public problem: Problem,
   ) {
-    super(message);
+    super(problemMessage(problem));
   }
 }
+
+export async function readResponse<T>(response: Response): Promise<T> {
+  if (!response.ok) {
+    let problem: Problem = {
+      code: `http_${response.status}`,
+      params: { status: response.status },
+    };
+    if (response.headers.get("content-type")?.includes("application/json")) {
+      const body = await response.json().catch(() => null);
+      if (typeof body?.code === "string") problem = body;
+    }
+    throw new APIError(response.status, problem);
+  }
+  if (!response.headers.get("content-type")?.includes("application/json")) {
+    throw new APIError(401, { code: "http_401" });
+  }
+  return response.json();
+}
+
 export async function api<T>(
   path: string,
   method = "GET",
   data?: unknown,
+  signal?: AbortSignal,
 ): Promise<T> {
   const response = await fetch(path, {
     method,
+    signal,
     headers: { "Content-Type": "application/json", "X-NAC": "1" },
     body: data === undefined ? undefined : JSON.stringify(data),
     cache: "no-store",
   });
-  if (!response.ok) {
-    const body = await response.text();
-    let detail = body;
-    try {
-      detail = JSON.parse(body).message ?? body;
-    } catch {
-      /* Non-JSON proxy error. */
-    }
-    throw new APIError(
-      response.status,
-      t(detail.replace(/ in type [\w.]+/g, "")),
-    );
-  }
-  const contentType = response.headers.get("content-type");
-  if (!contentType?.includes("application/json")) {
-    throw new APIError(
-      401,
-      t("Сессия закончилась. Обновите страницу для входа."),
-    );
-  }
-  return response.json();
+  return readResponse<T>(response);
 }
-export function dateRange(date: string, zone: string, view = "month") {
-  const unit = view === "year" ? "year" : "month";
-  const padding = view === "year" ? 0 : 7;
-  const start = dayjs.tz(date, zone).startOf(unit).subtract(padding, "day");
-  const end = dayjs.tz(date, zone).endOf(unit).add(padding, "day");
-  return new URLSearchParams({
-    from: start.toISOString(),
-    to: end.toISOString(),
-  });
-}
-export function displayTime(value: string, zone: string) {
-  return dayjs(value).tz(zone).format("YYYY-MM-DD HH:mm:ss");
-}
-export function toInstant(value: string, zone: string) {
-  return dayjs.tz(value, zone).toISOString();
-}
+
 export function message(error: unknown) {
-  const detail = error instanceof Error ? error.message : String(error);
-  try {
-    return t(JSON.parse(detail).message ?? detail);
-  } catch {
-    return t(detail);
-  }
+  if (error instanceof APIError) return problemMessage(error.problem);
+  return t(error instanceof Error ? error.message : String(error));
 }
 export const all: Rule = { op: "true" };
-
-export function effectiveTimezone(value?: string) {
-  return value || Intl.DateTimeFormat().resolvedOptions().timeZone;
-}

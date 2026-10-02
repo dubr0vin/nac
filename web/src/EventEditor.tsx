@@ -1,5 +1,5 @@
 import i18n, { t, scheduleLabels } from "./i18n";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Button,
@@ -17,6 +17,7 @@ import {
   TextInput,
   Title,
 } from "@mantine/core";
+import { usePolling } from "./usePolling";
 import { ResourcesSchedule, type ScheduleEventData } from "@mantine/schedule";
 import {
   api,
@@ -26,6 +27,9 @@ import {
   effectiveTimezone,
   message,
   toInstant,
+  allDayRange,
+  eventTimes,
+  moveToSlot as movedToSlot,
   type Event,
   type EventDetail,
   type Occurrence,
@@ -47,7 +51,6 @@ export function EventEditor({
   const [detail, setDetail] = useState<EventDetail>();
   const [scope, setScope] = useState(occurrence.rid ? "occurrence" : "series");
   const [form, setForm] = useState<Event>();
-  const [editors, setEditors] = useState<"all" | "author">("all");
   const [availability, setAvailability] = useState<
     Record<string, Occurrence[]>
   >({});
@@ -60,12 +63,7 @@ export function EventEditor({
   const [error, setError] = useState("");
   const [saving, setSaving] = useState(false);
   const isNew = !occurrence.eventId;
-  const editable =
-    isNew ||
-    (!!detail?.event.members.some(
-      (member) => member.user === state.me.id && member.editor,
-    ) &&
-      !detail?.event.source);
+  const editable = isNew || !!detail?.editable;
   const rid = scope === "occurrence" ? occurrence.rid : "";
 
   useEffect(() => {
@@ -74,6 +72,7 @@ export function EventEditor({
       setForm({
         id: "",
         creator: state.me.id,
+        editPolicy: "all",
         version: 0,
         title: "",
         start: occurrence.start,
@@ -85,7 +84,7 @@ export function EventEditor({
         url: "",
         cancelled: false,
         rrule: "",
-        members: [{ user: state.me.id, editor: true }],
+        members: [{ user: state.me.id }],
       });
     } else {
       api<EventDetail>(`/api/events/${occurrence.eventId}`)
@@ -114,56 +113,37 @@ export function EventEditor({
     setForm({
       ...selected,
       creator: master.creator,
+      editPolicy: master.editPolicy,
       members: master.members,
       version: master.version,
       rrule: master.rrule,
     });
-    setEditors(
-      master.editPolicy ??
-        (master.members.every((member) => member.editor) ? "all" : "author"),
-    );
     setScheduleDate(dayjs(selected.start).tz(zone).format("YYYY-MM-DD"));
   }, [detail, rid]);
 
   const memberIDs = form?.members.map((member) => member.user) ?? [];
   const membersKey = JSON.stringify(memberIDs);
-  useEffect(() => {
-    if (!form) return;
-    let active = true;
-    let running = false;
-    async function load() {
-      if (running) return;
-      running = true;
+  const loadAvailability = useCallback(
+    async (signal: AbortSignal) => {
       try {
-        const query = dateRange(scheduleDate, zone);
+        const query = dateRange(scheduleDate, zone, scheduleView);
         const result = await api<Record<string, Occurrence[]>>(
           `/api/availability?${query}`,
           "POST",
-          memberIDs,
+          JSON.parse(membersKey),
+          signal,
         );
-        if (active) {
+        if (!signal.aborted) {
           setAvailability(result);
           setAvailabilityError("");
         }
       } catch (error) {
-        if (active) setAvailabilityError(message(error));
-      } finally {
-        running = false;
+        if (!signal.aborted) setAvailabilityError(message(error));
       }
-    }
-    const delay = window.setTimeout(load, 200);
-    const timer = window.setInterval(load, state.me.settings.poll * 1000);
-    const focus = () => {
-      if (!document.hidden) void load();
-    };
-    document.addEventListener("visibilitychange", focus);
-    return () => {
-      active = false;
-      clearTimeout(delay);
-      clearInterval(timer);
-      document.removeEventListener("visibilitychange", focus);
-    };
-  }, [membersKey, scheduleDate, zone, state.me.settings.poll]);
+    },
+    [membersKey, scheduleDate, scheduleView, zone],
+  );
+  usePolling(loadAvailability, state.me.settings.poll, !!form);
 
   function patch(update: Partial<Event>) {
     setForm((current) => (current ? { ...current, ...update } : current));
@@ -175,31 +155,7 @@ export function EventEditor({
   }
   function moveToSlot(value: string) {
     if (!form || !editable || saving) return;
-    const eventZone = form.allDay ? form.timezone : zone;
-    const previousStart = dayjs(form.start).tz(eventZone);
-    const previousEnd = dayjs(form.end).tz(eventZone);
-    const date = value.slice(0, 10);
-    const start = toInstant(
-      form.allDay
-        ? date
-        : value.length === 10
-          ? `${date} ${previousStart.format("HH:mm:ss")}`
-          : value,
-      eventZone,
-    );
-    const days = dayjs(previousEnd.format("YYYY-MM-DD")).diff(
-      dayjs(previousStart.format("YYYY-MM-DD")),
-      "day",
-    );
-    const end = form.allDay
-      ? toInstant(
-          dayjs(date).add(Math.max(1, days), "day").format("YYYY-MM-DD"),
-          eventZone,
-        )
-      : dayjs(start)
-          .add(previousEnd.diff(previousStart), "millisecond")
-          .toISOString();
-    patch({ start, end });
+    patch(movedToSlot(form, value, zone));
   }
   function moveDraft({
     event,
@@ -211,18 +167,16 @@ export function EventEditor({
     newEnd: string;
   }) {
     if (!form || !canMove(event)) return;
-    const eventZone = form.allDay ? form.timezone : zone;
-    const start = form.allDay ? dayjs(newStart).format("YYYY-MM-DD") : newStart;
-    const end = form.allDay ? dayjs(newEnd).format("YYYY-MM-DD") : newEnd;
-    const endDate =
-      form.allDay && end <= start
-        ? dayjs(start).add(1, "day").format("YYYY-MM-DD")
-        : end;
-    patch({
-      start: toInstant(start, eventZone),
-      end: toInstant(endDate, eventZone),
-    });
+    patch(
+      eventTimes(
+        newStart,
+        newEnd,
+        form.allDay,
+        form.allDay ? form.timezone : zone,
+      ),
+    );
   }
+
   async function save() {
     if (!form) return;
     setSaving(true);
@@ -235,10 +189,8 @@ export function EventEditor({
         isNew ? "POST" : "PUT",
         {
           ...body,
-          editPolicy: editors,
           members: users.map((user) => ({
             user,
-            editor: editors === "all" || user === form.creator,
           })),
         },
       );
@@ -395,14 +347,15 @@ export function EventEditor({
                       checked={form.allDay}
                       onChange={(event) => {
                         const allDay = event.currentTarget.checked;
-                        const start = dayjs(form.start).tz(zone).startOf("day");
+                        const date = dayjs(form.start)
+                          .tz(zone)
+                          .format("YYYY-MM-DD");
                         patch(
                           allDay
                             ? {
                                 allDay,
                                 timezone: zone,
-                                start: start.toISOString(),
-                                end: start.add(1, "day").toISOString(),
+                                ...allDayRange(date, 1, zone),
                               }
                             : { allDay },
                         );
@@ -428,7 +381,6 @@ export function EventEditor({
                         members: [...new Set([form.creator, ...users])].map(
                           (user) => ({
                             user,
-                            editor: editors === "all" || user === form.creator,
                           }),
                         ),
                       })
@@ -437,13 +389,15 @@ export function EventEditor({
                   />
                   <Select
                     label={t("Кто может редактировать")}
-                    value={editors}
+                    value={form.editPolicy}
                     allowDeselect={false}
                     data={[
                       { value: "all", label: t("Все участники") },
                       { value: "author", label: t("Только автор") },
                     ]}
-                    onChange={(value) => setEditors(value as "all" | "author")}
+                    onChange={(value) =>
+                      patch({ editPolicy: value as "all" | "author" })
+                    }
                   />
                   <Select
                     label={t("Повторение")}

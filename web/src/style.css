@@ -17,12 +17,10 @@ body {
   margin-left: 5px;
 }
 .calendar {
-  overflow: hidden;
-  background: var(--mantine-color-body);
+  min-width: 0;
 }
 .calendar .calendar-header {
-  padding: var(--mantine-spacing-md);
-  margin-bottom: 0;
+  margin-bottom: var(--mantine-spacing-md);
 }
 .plain-fieldset {
   border: 0;
@@ -39,10 +37,24 @@ body {
   }
 }
 
-.calendar .mantine-ScheduleEvent-eventInner,
+.calendar :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner),
 .calendar .mantine-MobileMonthView-mobileMonthViewEventColor,
 .calendar .mantine-AgendaView-agendaViewEventColor {
-  background-image: var(--nac-event-stripes, none);
+  box-shadow: inset 3px 0 var(--nac-event-accent, transparent);
+}
+
+.calendar [data-accent] :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner),
+.calendar [data-accent] .mantine-MobileMonthView-mobileMonthViewEventTitle,
+.calendar [data-accent] .mantine-AgendaView-agendaViewEventTitle {
+  color: var(--nac-event-accent);
+}
+
+.calendar [data-accent] :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner) {
+  padding-inline-start: 6px;
+}
+.calendar :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner):not([data-nowrap]) {
+  overflow-wrap: anywhere;
+  line-height: 1.2;
 }
 
 .event-page {
@@ -67,11 +79,13 @@ body {
 
 .calendar-layout {
   display: grid;
-  grid-template-columns: 260px minmax(0, 1fr);
+  grid-template-columns: 360px minmax(0, 1fr);
   gap: var(--mantine-spacing-lg);
   align-items: start;
 }
 .calendar-sidebar {
+  display: grid;
+  gap: var(--mantine-spacing-lg);
   position: sticky;
   top: var(--mantine-spacing-lg);
 }
@@ -80,10 +94,9 @@ body {
     grid-template-columns: minmax(0, 1fr);
   }
   .calendar-sidebar {
+    position: static;
+  }
+  .sidebar-month {
     display: none;
   }
-}
-
-.calendar-sidebar .mantine-MobileMonthView-mobileMonthViewDay::before {
-  top: 2px;
 }

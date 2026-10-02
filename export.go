@@ -2,7 +2,6 @@ package main
 
 import (
 	"bytes"
-	"errors"
 	"io"
 	"slices"
 	"strings"
@@ -66,7 +65,7 @@ func (a *App) putExport(c echo.Context) error {
 	}
 	if item.Condition != "" {
 		if len(item.Condition) > 65536 {
-			return badRequest(errors.New("config exceeds 64 KiB"))
+			return badRequest(problem("config_too_large"))
 		}
 		decoder := yaml.NewDecoder(strings.NewReader(item.Condition))
 		if err := decoder.Decode(&item.Rule); err != nil {
@@ -74,18 +73,18 @@ func (a *App) putExport(c echo.Context) error {
 		}
 		var extra any
 		if err := decoder.Decode(&extra); err != io.EOF {
-			return badRequest(errors.New("expected one YAML document"))
+			return badRequest(problem("single_yaml_document"))
 		}
 	}
 	if item.Name == "" {
-		return echo.NewHTTPError(400, "name required")
+		return echo.NewHTTPError(400, problem("name_required"))
 	}
 	if err := item.Rule.Validate(0); err != nil {
 		return badRequest(err)
 	}
 	for _, field := range item.Fields {
 		if !slices.Contains([]string{"title", "description", "location", "url", "members", "tags"}, field) {
-			return echo.NewHTTPError(400, "unknown export field")
+			return echo.NewHTTPError(400, problem("unknown_export_field"))
 		}
 	}
 	if err := item.validateView(); err != nil {
@@ -109,7 +108,7 @@ func (a *App) putExport(c echo.Context) error {
 func (item Export) validateView() error {
 	if !slices.Contains([]string{"day", "week", "month", "year", "list"}, item.View) ||
 		!slices.Contains([]string{"light", "dark", "auto"}, item.Theme) || item.Poll < 5 || item.Poll > 3600 {
-		return echo.NewHTTPError(400, "invalid view, theme or polling interval (5–3600 seconds)")
+		return echo.NewHTTPError(400, problem("invalid_view"))
 	}
 	if _, err := time.LoadLocation(item.Timezone); err != nil {
 		return badRequest(err)
@@ -183,15 +182,16 @@ func (a *App) viewData(c echo.Context) error {
 	if err != nil {
 		return err
 	}
+	states, err := a.tagStates(owner.ID)
+	if err != nil {
+		return err
+	}
 	result := []Occurrence{}
 	for _, event := range events {
-		tags, err := a.tagState(event.ID, owner.ID)
-		if err != nil {
-			return err
-		}
+		tags := states[event.ID]
 		instances, err := expand(event, from, to)
 		if err != nil {
-			return echo.NewHTTPError(422, err.Error())
+			return echo.NewHTTPError(422, err)
 		}
 		for rid, instance := range instances {
 			personal := tagsFor(event, rid, tags)
@@ -308,14 +308,15 @@ func (a *App) calendar(item Export) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	states, err := a.tagStates(owner.ID)
+	if err != nil {
+		return nil, err
+	}
 	calendar := ical.NewCalendar()
 	calendar.Props.SetText("VERSION", "2.0")
 	calendar.Props.SetText("PRODID", "-//NAC//Calendar//EN")
 	for _, event := range events {
-		state, err := a.tagState(event.ID, owner.ID)
-		if err != nil {
-			return nil, err
-		}
+		state := states[event.ID]
 		baseTags := tagsFor(event, "", state)
 		baseVisible := !event.Cancelled && item.Rule.Match(baseTags)
 		uid := publicID(item.ID, event.ID, "")
