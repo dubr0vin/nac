@@ -1,0 +1,66 @@
+body {
+  background: light-dark(#f7f8fc, #14151b);
+}
+.app {
+  max-width: 1700px;
+  margin: auto;
+}
+.brand {
+  font-size: 38px;
+  letter-spacing: -3px;
+  font-weight: 800;
+  line-height: 1;
+}
+.brand span {
+  color: var(--mantine-primary-color-6);
+  font-size: 14px;
+  margin-left: 5px;
+}
+.calendar {
+  overflow: hidden;
+  background: var(--mantine-color-body);
+}
+.calendar .calendar-header {
+  padding: var(--mantine-spacing-md);
+  margin-bottom: 0;
+}
+.plain-fieldset {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+@media (max-width: 640px) {
+  .app {
+    padding: 12px;
+  }
+  .brand {
+    display: none;
+  }
+}
+
+.calendar .mantine-ScheduleEvent-eventInner,
+.calendar .mantine-MobileMonthView-mobileMonthViewEventColor,
+.calendar .mantine-AgendaView-agendaViewEventColor {
+  background-image: var(--nac-event-stripes, none);
+}
+
+.event-page {
+  display: grid;
+  grid-template-columns: minmax(320px, 420px) minmax(0, 1fr);
+  gap: var(--mantine-spacing-xl);
+  align-items: start;
+}
+.participants-schedule {
+  min-width: 0;
+  position: sticky;
+  top: var(--mantine-spacing-lg);
+}
+@media (max-width: 900px) {
+  .event-page {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .participants-schedule {
+    position: static;
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "name": "nac",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "tsc --noEmit && vite build"
+  },
+  "dependencies": {
+    "@mantine/core": "latest",
+    "@mantine/dates": "latest",
+    "@mantine/hooks": "latest",
+    "@mantine/schedule": "latest",
+    "dayjs": "latest",
+    "i18next": "^26.4.2",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-i18next": "^17.0.15",
+    "@floating-ui/react": "0.27.20"
+  },
+  "devDependencies": {
+    "@types/react": "latest",
+    "@types/react-dom": "latest",
+    "@vitejs/plugin-react": "latest",
+    "typescript": "latest",
+    "vite": "latest"
+  }
+}
