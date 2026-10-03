@@ -43,14 +43,23 @@ body {
   box-shadow: inset 3px 0 var(--nac-event-accent, transparent);
 }
 
-.calendar [data-accent] :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner),
-.calendar [data-accent] .mantine-MobileMonthView-mobileMonthViewEventTitle,
-.calendar [data-accent] .mantine-AgendaView-agendaViewEventTitle {
-  color: var(--nac-event-accent);
-}
-
 .calendar [data-accent] :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner) {
   padding-inline-start: 6px;
+}
+.calendar [data-accent] :is(
+  .mantine-ScheduleEvent-eventInner,
+  .mantine-DayView-eventInner,
+  .mantine-MobileMonthView-mobileMonthViewEventTitle,
+  .mantine-AgendaView-agendaViewEventTitle
+)::before {
+  content: "";
+  float: inline-start;
+  width: 0.6em;
+  height: 0.6em;
+  margin-inline-end: 0.4em;
+  border-radius: 50%;
+  background: var(--nac-event-accent);
+  margin-block-start: 0.3em;
 }
 .calendar :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner):not([data-nowrap]) {
   overflow-wrap: anywhere;
