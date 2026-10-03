@@ -74,12 +74,9 @@ export function EventPopover({
       .then((detail) => {
         if (!active) return;
         setDetail(detail);
-        const base = detail.tags[""]?.add ?? [];
-        const override = event.rid ? detail.tags[event.rid] : undefined;
+        const series = detail.tags[""];
         setSelected(
-          [...new Set([...base, ...(override?.add ?? [])])].filter(
-            (tag) => !override?.remove?.includes(tag),
-          ),
+          (series?.add ?? []).filter((tag) => !series?.remove?.includes(tag)),
         );
       })
       .catch((error) => {
@@ -88,7 +85,7 @@ export function EventPopover({
     return () => {
       active = false;
     };
-  }, [event.eventId, event.rid]);
+  }, [event.eventId]);
 
   async function toggle(tag: string) {
     if (!detail || saving) return;
@@ -96,17 +93,12 @@ export function EventPopover({
     const next = selected.includes(tag)
       ? selected.filter((value) => value !== tag)
       : [...selected, tag];
-    const base = detail.tags[""]?.add ?? [];
-    const update: Tags = {
-      add: event.rid ? next.filter((value) => !base.includes(value)) : next,
-      remove: event.rid ? base.filter((value) => !next.includes(value)) : [],
-    };
+    const update: Tags = { add: next, remove: [] };
     setSelected(next);
     setSaving(true);
     setError("");
     try {
-      const query = event.rid ? `?rid=${encodeURIComponent(event.rid)}` : "";
-      await api(`/api/events/${event.eventId}/tags${query}`, "PUT", update);
+      await api(`/api/events/${event.eventId}/tags`, "PUT", update);
       onSaved();
     } catch (error) {
       setSelected(previous);
