@@ -109,3 +109,80 @@ body {
     display: none;
   }
 }
+
+/* Let Schedule's own scroll area fill the space below the app header. */
+@media (min-width: 1001px) {
+  .calendar-page {
+    height: 100dvh;
+  }
+  .calendar-shell {
+    height: 100%;
+    min-height: 0;
+  }
+  .calendar-shell > * {
+    flex-shrink: 0;
+  }
+  .calendar-layout {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .calendar-layout[data-shared] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .calendar-sidebar {
+    position: static;
+    align-content: start;
+    overflow: auto;
+  }
+  .calendar {
+    overflow: hidden;
+  }
+  .calendar :is(.mantine-Schedule-root, .mantine-Schedule-desktopView) {
+    height: 100%;
+  }
+  .calendar :is(.mantine-WeekView-weekView, .mantine-DayView-dayView,
+    .mantine-MonthView-monthView, .mantine-YearView-yearView) {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+  }
+  .calendar .calendar-header {
+    flex-shrink: 0;
+  }
+  .calendar :is(.mantine-WeekView-weekViewRoot, .mantine-DayView-dayViewScrollArea,
+    .mantine-MonthView-monthViewScrollArea) {
+    flex: 1;
+    min-height: 0;
+  }
+  .calendar :is(.mantine-WeekView-agendaView, .mantine-DayView-agendaView,
+    .mantine-MonthView-agendaView) {
+    min-height: 0;
+    overflow: auto;
+  }
+  .calendar .mantine-YearView-yearViewMonths {
+    flex: 1;
+    min-height: 0;
+    overflow: auto;
+    border-radius: var(--year-view-radius);
+    outline: 1px solid var(--year-view-border-color);
+    outline-offset: -1px;
+  }
+  .calendar .mantine-MonthView-monthViewWeekdays {
+    position: sticky;
+    top: 0;
+    z-index: 4;
+    background: var(--mantine-color-body);
+  }
+  .calendar .mantine-WeekView-weekViewScrollArea {
+    height: 100%;
+  }
+  .calendar :is(.mantine-WeekView-weekViewAllDaySlots, .mantine-DayView-dayViewAllDay,
+    .mantine-DayView-dayViewSlotLabel[data-all-day]) {
+    position: sticky;
+    top: var(--week-view-week-day-height, 0px);
+    z-index: 4;
+    background: var(--mantine-color-body);
+  }
+}

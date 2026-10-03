@@ -174,6 +174,7 @@ function Calendar({
       labels={labels}
       layout="responsive"
       dayViewProps={{
+        startScrollTime: "09:00",
         withHeader: !!onView,
         classNames: { header: "calendar-header" },
         styles: { dayView: { "--day-view-slot-labels-width": "7rem" } },
@@ -181,6 +182,7 @@ function Calendar({
         getCurrentTime: () => dayjs().tz(zone).format("YYYY-MM-DD HH:mm:ss"),
       }}
       weekViewProps={{
+        startScrollTime: "09:00",
         withHeader: !!onView,
         classNames: { header: "calendar-header" },
         styles: { weekView: { "--week-view-slots-label-width": "7rem" } },
@@ -447,8 +449,8 @@ export default function App() {
   }
 
   return (
-    <Container fluid p={shared ? "sm" : "lg"} className="app">
-      <Stack gap="lg">
+    <Container fluid p={shared ? "sm" : "lg"} className="app calendar-page">
+      <Stack gap="lg" className="calendar-shell">
         <Group justify="space-between" align="center">
           {shared ? (
             <Title order={3}>{publicView?.name ?? "NAC"}</Title>
@@ -495,7 +497,7 @@ export default function App() {
           </Alert>
         )}
         {(!shared && state) || (shared && publicView) ? (
-          <div className={shared ? undefined : "calendar-layout"}>
+          <div className="calendar-layout" data-shared={shared || undefined}>
             {!shared && (
               <aside className="calendar-sidebar">
                 <Paper withBorder radius="lg" className="sidebar-month">
