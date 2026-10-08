@@ -18,7 +18,6 @@ import {
   Paper,
   Stack,
   Text,
-  Title,
   useMantineColorScheme,
 } from "@mantine/core";
 import {
@@ -449,46 +448,49 @@ export default function App() {
   }
 
   return (
-    <Container fluid p={shared ? "sm" : "lg"} className="app calendar-page">
+    <Container
+      fluid
+      p={shared ? 0 : "lg"}
+      className="app calendar-page"
+      data-shared={shared || undefined}
+    >
       <Stack gap="lg" className="calendar-shell">
-        <Group justify="space-between" align="center">
-          {shared ? (
-            <Title order={3}>{publicView?.name ?? "NAC"}</Title>
-          ) : (
+        {!shared && (
+          <Group justify="space-between" align="center">
             <div className="brand">
               nac<span>●</span>
             </div>
-          )}
-          {!shared && state && (
-            <Group gap="sm" ml="auto">
-              <Button onClick={() => createEvent()}>{t("+ Событие")}</Button>
-              <Menu position="bottom-end">
-                <Menu.Target>
-                  <Button
-                    variant="subtle"
-                    color="gray"
-                    aria-label={t("Профиль")}
-                  >
-                    {state.me.name || state.me.login}
-                  </Button>
-                </Menu.Target>
-                <Menu.Dropdown>
-                  <Menu.Item onClick={() => setSettingsOpen(true)}>
-                    {t("Настройки")}
-                  </Menu.Item>
-                  <Menu.Divider />
-                  <Menu.Label>{t("Язык")}</Menu.Label>
-                  <Menu.Item onClick={() => void i18n.changeLanguage("ru")}>
-                    Русский
-                  </Menu.Item>
-                  <Menu.Item onClick={() => void i18n.changeLanguage("en")}>
-                    English
-                  </Menu.Item>
-                </Menu.Dropdown>
-              </Menu>
-            </Group>
-          )}
-        </Group>
+            {state && (
+              <Group gap="sm" ml="auto">
+                <Button onClick={() => createEvent()}>{t("+ Событие")}</Button>
+                <Menu position="bottom-end">
+                  <Menu.Target>
+                    <Button
+                      variant="subtle"
+                      color="gray"
+                      aria-label={t("Профиль")}
+                    >
+                      {state.me.name || state.me.login}
+                    </Button>
+                  </Menu.Target>
+                  <Menu.Dropdown>
+                    <Menu.Item onClick={() => setSettingsOpen(true)}>
+                      {t("Настройки")}
+                    </Menu.Item>
+                    <Menu.Divider />
+                    <Menu.Label>{t("Язык")}</Menu.Label>
+                    <Menu.Item onClick={() => void i18n.changeLanguage("ru")}>
+                      Русский
+                    </Menu.Item>
+                    <Menu.Item onClick={() => void i18n.changeLanguage("en")}>
+                      English
+                    </Menu.Item>
+                  </Menu.Dropdown>
+                </Menu>
+              </Group>
+            )}
+          </Group>
+        )}
         {error && (
           <Alert color="red" title={t("Не удалось обновить данные")}>
             {shared && !publicView
@@ -598,9 +600,11 @@ export default function App() {
             </Center>
           )
         )}
-        <Text size="xs" c="dimmed" ta="right">
-          {updated && t("Обновлено {{time}}", { time: updated })}
-        </Text>
+        {!shared && (
+          <Text size="xs" c="dimmed" ta="right">
+            {updated && t("Обновлено {{time}}", { time: updated })}
+          </Text>
+        )}
       </Stack>
       {selectedEvent && state && (
         <EventPopover

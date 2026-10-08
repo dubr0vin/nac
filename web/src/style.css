@@ -37,29 +37,17 @@ body {
   }
 }
 
-.calendar :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner),
-.calendar .mantine-MobileMonthView-mobileMonthViewEventColor,
-.calendar .mantine-AgendaView-agendaViewEventColor {
-  box-shadow: inset 3px 0 var(--nac-event-accent, transparent);
+/* Keep the current-time line above events, within the scrolling time grid. */
+.calendar :is(.mantine-WeekView-weekViewInner, .mantine-DayView-dayViewTimeSlots) {
+  isolation: isolate;
 }
-
-.calendar [data-accent] :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner) {
-  padding-inline-start: 6px;
+.calendar :is(.mantine-WeekView-currentTimeIndicator, .mantine-DayView-currentTimeIndicator) {
+  z-index: 11;
 }
-.calendar [data-accent] :is(
-  .mantine-ScheduleEvent-eventInner,
-  .mantine-DayView-eventInner,
-  .mantine-MobileMonthView-mobileMonthViewEventTitle,
-  .mantine-AgendaView-agendaViewEventTitle
-)::before {
-  content: "";
-  float: inline-start;
-  width: 0.6em;
-  height: 0.6em;
-  margin-inline-end: 0.4em;
-  border-radius: 50%;
-  background: var(--nac-event-accent);
-  margin-block-start: 0.3em;
+.calendar [data-accent] {
+  outline: 2px solid var(--nac-event-accent);
+  outline-offset: -2px;
+  border-radius: var(--event-radius, var(--mantine-radius-default));
 }
 .calendar :is(.mantine-ScheduleEvent-eventInner, .mantine-DayView-eventInner):not([data-nowrap]) {
   overflow-wrap: anywhere;
@@ -139,50 +127,73 @@ body {
   .calendar {
     overflow: hidden;
   }
-  .calendar :is(.mantine-Schedule-root, .mantine-Schedule-desktopView) {
-    height: 100%;
-  }
-  .calendar :is(.mantine-WeekView-weekView, .mantine-DayView-dayView,
-    .mantine-MonthView-monthView, .mantine-YearView-yearView) {
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-  }
-  .calendar .calendar-header {
-    flex-shrink: 0;
-  }
-  .calendar :is(.mantine-WeekView-weekViewRoot, .mantine-DayView-dayViewScrollArea,
-    .mantine-MonthView-monthViewScrollArea) {
-    flex: 1;
-    min-height: 0;
-  }
-  .calendar :is(.mantine-WeekView-agendaView, .mantine-DayView-agendaView,
-    .mantine-MonthView-agendaView) {
-    min-height: 0;
-    overflow: auto;
-  }
-  .calendar .mantine-YearView-yearViewMonths {
-    flex: 1;
-    min-height: 0;
-    overflow: auto;
-    border-radius: var(--year-view-radius);
-    outline: 1px solid var(--year-view-border-color);
-    outline-offset: -1px;
-  }
-  .calendar .mantine-MonthView-monthViewWeekdays {
-    position: sticky;
-    top: 0;
-    z-index: 4;
-    background: var(--mantine-color-body);
-  }
-  .calendar .mantine-WeekView-weekViewScrollArea {
-    height: 100%;
-  }
-  .calendar :is(.mantine-WeekView-weekViewAllDaySlots, .mantine-DayView-dayViewAllDay,
-    .mantine-DayView-dayViewSlotLabel[data-all-day]) {
-    position: sticky;
-    top: var(--week-view-week-day-height, 0px);
-    z-index: 4;
-    background: var(--mantine-color-body);
-  }
+}
+
+.calendar :is(.mantine-Schedule-root, .mantine-Schedule-desktopView) {
+  height: 100%;
+}
+.calendar :is(.mantine-WeekView-weekView, .mantine-DayView-dayView,
+  .mantine-MonthView-monthView, .mantine-YearView-yearView) {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.calendar .calendar-header {
+  flex-shrink: 0;
+}
+.calendar :is(.mantine-WeekView-weekViewRoot, .mantine-DayView-dayViewScrollArea,
+  .mantine-MonthView-monthViewScrollArea) {
+  flex: 1;
+  min-height: 0;
+}
+.calendar :is(.mantine-WeekView-agendaView, .mantine-DayView-agendaView,
+  .mantine-MonthView-agendaView) {
+  min-height: 0;
+  overflow: auto;
+}
+.calendar .mantine-YearView-yearViewMonths {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  border-radius: var(--year-view-radius);
+  outline: 1px solid var(--year-view-border-color);
+  outline-offset: -1px;
+}
+.calendar .mantine-MonthView-monthViewWeekdays {
+  position: sticky;
+  top: 0;
+  z-index: 4;
+  background: var(--mantine-color-body);
+}
+.calendar .mantine-WeekView-weekViewScrollArea {
+  height: 100%;
+}
+.calendar :is(.mantine-WeekView-weekViewAllDaySlots, .mantine-DayView-dayViewAllDay,
+  .mantine-DayView-dayViewSlotLabel[data-all-day]) {
+  position: sticky;
+  top: var(--week-view-week-day-height, 0px);
+  z-index: 4;
+  background: var(--mantine-color-body);
+}
+
+
+/* Public calendar views use the entire iframe or window, at any screen size. */
+.calendar-page[data-shared] {
+  height: 100dvh;
+  max-width: none;
+  padding: 0;
+}
+.calendar-page[data-shared] .calendar-shell {
+  height: 100%;
+  min-height: 0;
+}
+.calendar-page[data-shared] .calendar-layout {
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+  align-items: stretch;
+}
+.calendar-page[data-shared] .calendar {
+  overflow: auto;
 }
